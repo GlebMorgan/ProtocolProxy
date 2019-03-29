@@ -5,6 +5,8 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QAction
 from colored_logger import ColorHandler
 
+from fcb_ui import SonyUI
+import tests
 
 log = logging.getLogger(__name__ + ":main")
 log.setLevel(logging.DEBUG)
@@ -33,9 +35,9 @@ class ActionButton(QPushButton):
 class Actions:
     def __init__(self):
         self.testAction: QAction = self.newAction(
-            name="TestAction",
-            slot=lambda: print("Test test test"),
-            shortcut=None
+                name="TestAction",
+                slot=lambda: print("Test test test"),
+                shortcut=None
         )
 
         self.testAction2: QAction = self.newAction(
@@ -55,16 +57,15 @@ class Actions:
 
 class App(QApplication):
 
-
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, sonyUi: QWidget, *args):
+        super().__init__(*args)
         self.window = self.setUiWindow()
+        self.sonyUiPanel = sonyUi
         self.actions = Actions()
 
         self.testButton = self.newButton('Test', self.actions.testAction, toggleable=True)
         self.testButton2 = self.newButton('Test2')
         self.desk = self.setDesk()
-
 
     def setUiWindow(self):
         this = QMainWindow()
@@ -74,7 +75,6 @@ class App(QApplication):
         # this.setWindowIcon(QIcon("sampleIcon.jpg"))
         this.show()
         return this
-
 
     def setDesk(self):
         this = QWidget(self.window)
@@ -87,13 +87,13 @@ class App(QApplication):
         buttonsLayout.addStretch(1)
 
         windowLayout.addLayout(buttonsLayout)
+        windowLayout.addWidget(self.sonyUiPanel)
         windowLayout.addStretch(1)
 
         this.setLayout(windowLayout)
         self.window.setCentralWidget(this)
 
         return this
-
 
     def newButton(self, name, action=None, toggleable=False):
         if action:
@@ -106,11 +106,9 @@ class App(QApplication):
         log.debug(f"Button {name} created: {this}")
         return this
 
-
     def testSlot(self, caller):
         print(f"Sender: {self.sender().__class__.__name__} '{self.sender().text()}'")
         print(f"Caller: {str(caller)}")
-
 
 
 if __name__ == '__main__':

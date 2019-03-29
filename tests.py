@@ -22,33 +22,33 @@ log.disabled = False
 # [Native control software] <———> [COM_PROXY_IN]===[COM_PROXY_OUT] <———> [pyProxy] <———> [COM] <———> [DEVICE]
 
 
-COM = 'COM1'
-COM_PROXY_IN = 'COM10'
-COM_PROXY_OUT = 'COM11'
+def main():
+    COM = 'COM1'
+    COM_PROXY_IN = 'COM10'
+    COM_PROXY_OUT = 'COM11'
 
+    def initCommunication(stopEvent):
+        appCom = serial.Serial(port=COM_PROXY_OUT, timeout=0.5, write_timeout=0.5,
+                               baudrate=protocol.PARAMS.BAUDRATE, parity=protocol.PARAMS.PARITY)
 
-def initCommunication(stopEvent):
+        devCom = SerialTransceiver(devAddr=protocol.PARAMS.DEVICE_ADDRESS, port=COM, parity=serial.PARITY_NONE)
 
-    appCom = serial.Serial(port=COM_PROXY_OUT, timeout=0.5, write_timeout=0.5,
-                           baudrate=protocol.PARAMS.BAUDRATE, parity=protocol.PARAMS.PARITY)
+        print("Start communication")
+        protocol.communicate(devCom, appCom, stopEvent)
 
-    devCom = SerialTransceiver(devAddr=protocol.PARAMS.DEVICE_ADDRESS, port=COM, parity=serial.PARITY_NONE)
+        # TODO: pull internal protocol parameters from reply message
+        #       and assign (create prior to) them to corresponding protocol class object
 
-    print("Start communication")
-    protocol.communicate(devCom, appCom, stopEvent)
-
-    # TODO: pull internal protocol parameters from reply message
-    #       and assign (create prior to) them to corresponding protocol class object
-
-
-if (__name__ == '__main__'):
+    def initThread(stopEvent):
+        commThread = threading.Thread(name="DeviceCommunicationLoop", target=initCommunication, args=(stopEvent,))
+        commThread.start()
+        return commThread
 
     protocols = {'sony': SONY, 'mwxc': MWXC}
-    protocol = protocols['mwxc']
+    protocol = protocols['sony']
 
     stopEvent = threading.Event()
-    commThread = threading.Thread(name="DeviceCommunicationLoop", target=initCommunication, args=(stopEvent,))
-    commThread.start()
+    commThread = initThread(stopEvent)
 
     for i in range(10_000):
         serial.time.sleep(0.1)
@@ -76,6 +76,13 @@ if (__name__ == '__main__'):
                 if (command == 'com'):
                     COM = f'COM{params[1]}'
 
+                if (command in protocols):
+                    protocol = protocols[command]
+                    stopEvent.set()
+                    commThread.join()
+                    stopEvent.clear()
+                    commThread = initThread(stopEvent)
+
                 if (command in protocol.PARAMS.flagAliases):
                     nicks = protocol.PARAMS.flagAliases
                     setattr(protocol, nicks[command], not getattr(protocol, nicks[command]))
@@ -83,6 +90,7 @@ if (__name__ == '__main__'):
                           f"{'on' if getattr(protocol, nicks[command]) else 'off'}")
 
                 if (command == 'stat'):
+                    protocol.sendNoDataPacket(protocol)
                     print(protocol)
 
 
@@ -90,3 +98,7 @@ if (__name__ == '__main__'):
         except SerialError as e: print(e)
         except DeviceError as e: print(e)
         except NotImplementedError as e: print(e)
+
+
+if (__name__ == '__main__'):
+    main()

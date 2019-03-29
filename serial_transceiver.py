@@ -4,22 +4,17 @@ import logging
 import struct
 
 import serial
+import utils
 from checksums import rfc1071
 from colored_logger import ColorHandler
 from utils import bytewise
 
-
-log = logging.getLogger(__name__ + ":main")
-log.setLevel(logging.DEBUG)
-log.addHandler(ColorHandler())
-log.disabled = False
-
+log = utils.getLogger(__name__)
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 
 SerialError = serial.serialutil.SerialException
-
 
 SerialWriteTimeoutError = serial.serialutil.SerialTimeoutException
 
@@ -48,6 +43,8 @@ class DeviceError(RuntimeError):
 
 class SerialTransceiver(serial.Serial):
     DEFAULT_COM = 'COM1'
+    DEFAULT_PARITY = serial.PARITY_NONE
+    DEFAULT_BAUDRATE = 921600
     TIMEOUT = 0.5
     HEADER_LEN = 6  # in bytes
     STARTBYTE: int = 0x5A
@@ -55,13 +52,11 @@ class SerialTransceiver(serial.Serial):
     RFC_CHECK_DISABLED = True
     LRC_CHECK_DISABLED = False
 
-
-    def __init__(self, devAddr, port=DEFAULT_COM, baudrate=921600, parity='E',
+    def __init__(self, devAddr, port=DEFAULT_COM, baudrate=DEFAULT_BAUDRATE, parity=DEFAULT_PARITY,
                  timeout=TIMEOUT, write_timeout=TIMEOUT, **kwargs):
         self.deviceAddress = devAddr
         super().__init__(port=port, baudrate=baudrate, parity=parity,
                          timeout=timeout, write_timeout=write_timeout, **kwargs)
-
 
     def receivePacket(self) -> bytes:
         """
@@ -112,7 +107,6 @@ class SerialTransceiver(serial.Serial):
                     return self.__readData(header)
             else: raise SerialCommunicationError("Cannot find header in datastream, too many attempts...")
 
-
     def __readData(self, header):
         datalen, zerobyte = self.__parseHeader(header)
         data = self.read(datalen + 2)  # 2 is wrapper RFC
@@ -120,7 +114,7 @@ class SerialTransceiver(serial.Serial):
             raise SerialCommunicationError(f"Bad packet (data too small, [{len(data)}] out of [{datalen + 2}])",
                                            dataname="Packet", data=header + data)
         if (self.RFC_CHECK_DISABLED or int.from_bytes(rfc1071(header + data), byteorder='big') == 0):
-            log.debug(f"Reply packet [{len(header + data)}]: {bytewise(header + data)}")
+            log.info(f"Reply packet [{len(header + data)}]: {bytewise(header + data)}")
             if (self.in_waiting != 0):
                 log.warning(f"Unread data ({self.in_waiting} bytes) is left in a serial datastream")
                 self.reset_input_buffer()
@@ -130,7 +124,6 @@ class SerialTransceiver(serial.Serial):
             raise SerialCommunicationError(f"Bad packet checksum (expected '{bytewise(rfc1071(data[:-2]))}', "
                                            f"got '{bytewise(data[-2:])}'). Packet discarded",
                                            dataname="Packet", data=header + data)
-
 
     @classmethod
     def __parseHeader(cls, header):
@@ -145,7 +138,6 @@ class SerialTransceiver(serial.Serial):
         zerobyte = (fields[2] & 1 << 15) >> 15  # extract EVEN flag (b15 in LSB / b7 in MSB)
         return datalen, zerobyte
 
-
     def sendPacket(self, msg):
         """ Wrap msg and send packet over serial port """
 
@@ -159,5 +151,5 @@ class SerialTransceiver(serial.Serial):
         packet = header + rfc1071(header) + msg + zerobyte
         packetToSend = packet + rfc1071(packet)
         bytesSentCount = self.write(packetToSend)
-        log.debug(f"Packet [{len(packetToSend)}]: {bytewise(packetToSend)}")
+        log.info(f"Packet [{len(packetToSend)}]: {bytewise(packetToSend)}")
         return bytesSentCount

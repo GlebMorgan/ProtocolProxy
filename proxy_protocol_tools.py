@@ -16,13 +16,12 @@ class ProxyProtocolMetaclass(type):
 
     def __init__(cls, name, bases, dct):
         super().__setattr__('altered', False)
+        super().__setattr__('subscribers', list())
         super().__setattr__('lock', threading.RLock())
         super().__init__(name, bases, dct)
 
-
     def __call__(cls, *args):
         raise SyntaxError("Class is not intended to be instantiated.")
-
 
     def __getattribute__(cls, name):
         with super().__getattribute__('lock'):
@@ -32,15 +31,17 @@ class ProxyProtocolMetaclass(type):
                 return altered
             return super().__getattribute__(name)
 
-
     def __setattr__(cls, name, val):
         with super().__getattribute__('lock'):
             if (cls.__annotations__.get(name, None) == PAR):
                 super().__setattr__('altered', True)
+                for subscriber in super().__getattribute__('subscribers'):
+                    subscriber.__call__()
             return super().__setattr__(name, val)
-
 
     def __str__(cls):
         return ', '.join(f'{attr} = {cls.__dict__[attr]}' for attr in cls.__dict__
                          if (not attr.startswith('__') and attr != 'altered'))
 
+    def subscribe(cls, func):
+        super().__getattribute__('subscribers').append(func)
