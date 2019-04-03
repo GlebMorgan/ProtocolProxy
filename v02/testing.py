@@ -19,18 +19,18 @@ lvl = {
 def SONY_receiveNative():
     import devices.sony
     print('—' * 20 + " NOT FINISHED " + '—' * 20)
-    return
+    # return
 
     d = devices.sony.SONY()
     msgs = (
         '88 30 01 FF',
         '88 30 01 FF FF FF FF FF',
         '88 30 01 FF FF',
-        '88' * 15,
+        '88 '*15+'FF',
         'FF FF 88 30 01 FF FF',
         '88 30 01 FF',
     )
-    commands = tuple(map(bytes.fromhex, commands))
+    commands = tuple(map(bytes.fromhex, msgs))
 
     s.reset_input_buffer()
     s.reset_output_buffer()
@@ -94,12 +94,20 @@ def SONY_wrap():
               )
 
 
+def _testUtf8Char():
+    # code = 0x2982
+    # print(chr(code))
+    for code in range(0x2980, 0x3000):
+        print(chr(code))
+
+
 if __name__ == '__main__':
     functions = tuple(
-            member for name, member in locals().items() if callable(member) and member.__module__ == '__main__'
+            member for name, member in locals().items() if
+            callable(member) and not member.__name__.startswith('_') and member.__module__ == '__main__'
     )
     print('Testing functions:')
     for f in functions: print(f"{' ' * 4}{f}")
     print()
 
-    functions[-1]()
+    functions[-3]()

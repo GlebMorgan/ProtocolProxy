@@ -48,7 +48,7 @@ class Par(Notifier):
         log.debug(f"Parameter altered: {self}")
 
     def __str__(self):
-        return f"{self.name}={self.value}{'✓' if self.inSync else '↻'}"
+        return f"{self.name}={self.value}{'✓' if self.inSync else '↺'}"
 
     def __repr__(self):
         return auto_repr(self, f"{self.name}={self.value}{'✓' if self.inSync else '↻'}")
