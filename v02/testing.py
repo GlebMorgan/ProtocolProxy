@@ -1,8 +1,11 @@
 import serial
-from utils import bytewise
+from utils import bytewise, Logger
 
-s = serial.Serial(port='COM10', baudrate=921600, parity='N', timeout=0.5, write_timeout=0.5)
-r = serial.Serial(port='COM11', baudrate=921600, parity='N', timeout=0.5, write_timeout=0.5)
+from peleng_transceiver import PelengTransceiver, SerialReadTimeoutError
+from serial_transceiver import SerialTransceiver
+
+s = PelengTransceiver(device=12, port='COM10', baudrate=921600, parity='N', timeout=0.5, write_timeout=0.5)
+r = SerialTransceiver(port='COM11', baudrate=921600, parity='N', timeout=0.5, write_timeout=0.5)
 
 # ▼ logging levels aliases
 lvl = {
@@ -15,6 +18,8 @@ lvl = {
     'N': 0,
 }
 
+log = Logger("Testing")
+
 
 def SONY_receiveNative():
     import devices.sony
@@ -26,6 +31,7 @@ def SONY_receiveNative():
         '88 30 01 FF',
         '88 30 01 FF FF FF FF FF',
         '88 30 01 FF FF',
+        '',
         '88 '*15+'FF',
         'FF FF 88 30 01 FF FF',
         '88 30 01 FF',
@@ -37,14 +43,15 @@ def SONY_receiveNative():
     r.reset_input_buffer()
     r.reset_output_buffer()
 
-    devices.sony.log.setLevel(lvl['E'])
+    devices.sony.log.setLevel(lvl['D'])
     with s, r:
         for c in commands:
-            s.write(c)
-            if (r.in_waiting):
+            try:
+                s.write(c)
                 reply = d.receiveNative(r)
-            print(f"Command [{len(c)} bytes]: {bytewise(c)}, reply [{len(reply)} bytes]: {bytewise(reply)}")
-            # assert reply == bytes.fromhex('88 30 01 FF')
+                print(f"Command [{len(c)} bytes]: {bytewise(c)}, reply [{len(reply)} bytes]: {bytewise(reply)}")
+                # assert reply == bytes.fromhex('88 30 01 FF')
+            except SerialReadTimeoutError as e: log.showError(e)
 
 
 def SONY_unwrap():

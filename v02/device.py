@@ -1,4 +1,3 @@
-from os import linesep
 from threading import RLock
 from typing import Union, Mapping
 
@@ -6,7 +5,20 @@ from utils import Logger, auto_repr
 
 from notifier import Notifier
 
+
 log = Logger("Device")
+
+
+class DeviceError(RuntimeError):
+    """ Firmware-level error, indicate the command sent to the device was not properly executed """
+
+
+class DataInvalidError(DeviceError):
+    """ Device reply contains invalid data """
+
+
+class BadAckError(DeviceError):
+    """ DSP protocol: devise has sent 'FF' acknowledge byte => error executing command on device side """
 
 
 class Par(Notifier):
@@ -30,8 +42,7 @@ class Par(Notifier):
     def ack(self, obtainedValue):
         if self.inSync:
             if self.value == obtainedValue: return
-            # FIXME: replace RuntimeError with serialTransceiver.DeviceError
-            else: raise RuntimeError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
+            else: raise DeviceError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
         else:
             if self.value == obtainedValue:
                 self.status = obtainedValue

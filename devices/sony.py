@@ -3,7 +3,7 @@ import struct
 from bits import bitsarray, flags
 from utils import Logger
 
-from device import Device, Par
+from device import Device, Par, DataInvalidError
 
 log = Logger("SONY")
 
@@ -21,7 +21,7 @@ class SONY(Device):
     CNT_IN = 0
     CNT_OUT = 0
 
-    def wrap(self, data: bytes):  #tested
+    def wrap(self, data: bytes):  # tested
         with self.lock:
             header = bitsarray(self.POWER, self.RESET, self.VIDEO_IN, self.VIDEO_OUT), self.CNT_IN % 0x100
             return struct.pack('< B B', *header) + data
@@ -39,18 +39,15 @@ class SONY(Device):
     def sendNative(self, com, data):
         com.write(data)
 
-    # TODO: finish out this ▼ code (what to do with unread data, in particular)
-    # FIXME: define type hint for 'com'
+    # NOTE: 'com' lacks type annotation only because of requirement to create dependency just 4 that...
     def receiveNative(self, com) -> bytes:
         inputBuffer = b''.join(self.readUpToFirstFF(com))
         if (com.in_waiting != 0):
             log.warning(f"Unread data ({com.in_waiting} bytes) is left in a serial datastream")
-            # com.reset_input_buffer()
-            # log.info(f"Serial input buffer flushed")
         return inputBuffer
 
     @staticmethod
-    def readUpToFirstFF(com):  # timeout NOT tested
+    def readUpToFirstFF(com):  # tested
         byte = com.read()
         while byte == b'\xFF':
             byte = com.read()  # ◄ skip all leading 'FF's
@@ -59,6 +56,5 @@ class SONY(Device):
             byte = com.read()
             yield byte
             if byte == b'\xFF': return
-        # FIXME: raise DataInvalidError here ▼
         # FIXME: intercept this error in receiveNative() and provide data that have been read + provide details
-        raise RuntimeError(f"DataInvalidError: bad data from SONY control software")
+        raise DataInvalidError(f"DataInvalidError: bad data from SONY control software")

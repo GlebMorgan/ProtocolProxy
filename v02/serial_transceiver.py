@@ -5,6 +5,7 @@ from utils import alias, Logger
 log = Logger("Serial")
 slog = Logger("Packets")
 
+
 # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ ERRORS ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ #
 
 SerialError = alias(serial.serialutil.SerialException)
@@ -44,18 +45,6 @@ class BadLrcError(SerialCommunicationError):
     """ DSP protocol: LRC checksum validation failed """
 
 
-class DeviceError(RuntimeError):
-    """ Firmware-level error, indicate the command sent to the device was not properly executed """
-
-
-class DataInvalidError(DeviceError):
-    """ Device reply contains invalid data """
-
-
-class BadAckError(DeviceError):
-    """ DSP protocol: devise has sent 'FF' acknowledge byte => error executing command on device side """
-
-
 # TODO: move def of this error to Application class
 class CommandError(RuntimeError):
     """ Application-level error, indicates invalid command signature / parameters / semantics """
@@ -77,7 +66,7 @@ class SerialTransceiver(serial.Serial):
     def __init__(self, **kwargs):
         config = self.DEFAULT_CONFIG
         config.update(kwargs)
-        super().__init__(config, **kwargs)
+        super().__init__(**config)
 
     def read(self, size=1):
         data = super().read(size)
