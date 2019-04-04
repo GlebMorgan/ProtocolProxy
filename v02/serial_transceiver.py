@@ -16,7 +16,6 @@ slog = Logger("Packets")
 
 SerialError = alias(serial.serialutil.SerialException)
 
-
 SerialWriteTimeoutError = alias(serial.serialutil.SerialTimeoutException)
 SerialWriteTimeoutError.__doc__ = """ Failed to send data for 'Serial().write_timeout' seconds """
 
@@ -32,7 +31,7 @@ class SerialCommunicationError(SerialError):
     def __init__(self, *args, data=None, dataname=None):
         if (data is not None):
             if (dataname is None):
-                log.error(f"In call to {self.__class__} - 'dataname' attribute not specified")
+                log.warning(f"In call to {self.__class__} - 'dataname' attribute not specified")
                 self.dataname = "Analyzed data"
             else: self.dataname = dataname
             self.data = data
@@ -82,20 +81,18 @@ class SerialTransceiver(serial.Serial):
             if actualSize == 0:
                 raise SerialReadTimeoutError("No reply")
             else:
-                raise BadDataError("Incomplete data")
+                raise BadDataError("Incomplete data", data=data)
         return data
 
     def readSimple(self, size=1):
         return super().read(size)
 
     def handleSerialError(self):  # TODO: PelengTransceiver.handleSerialError()
-        print(f"{self}.handleSerialError() is NotImplemented")
+        print(f"{self}.handleSerialError() - NotImplemented")
 
 
 class PelengTransceiver(SerialTransceiver):
     AUTO_LRC = False
-    RFC_CHECK_DISABLED = True
-    LRC_CHECK_DISABLED = False
     HEADER_LEN: int = 6  # in bytes
     STARTBYTE: int = 0x5A
     MASTER_ADR: int = 0  # should be set in reply to host machine
@@ -104,6 +101,9 @@ class PelengTransceiver(SerialTransceiver):
         super().__init__(**kwargs)
         self.deviceAddress = device
         self.masterAddress = master
+        # FIXME: make this ▼ 2 constant 'CHSUM_CHECK' + default them to True + change code in places where it is used
+        self.RFC_CHECK_DISABLED = False
+        self.FLUSH_UNREAD_DATA = False
 
     class addCRC():
         """Decorator to sendPacket() method, appending LRC byte to msg"""
@@ -154,8 +154,7 @@ class PelengTransceiver(SerialTransceiver):
         else:
             if (bytesReceived[0] == self.STARTBYTE):
                 log.warning(f"Bad header checksum (expected '{bytewise(rfc1071(bytesReceived[:-2]))}', "
-                            f"got '{bytewise(bytesReceived[-2:])}'). Header discarded, searching for valid one...",
-                            dataname="Header", data=bytesReceived)
+                            f"got '{bytewise(bytesReceived[-2:])}'). Header discarded, searching for valid one...")
             else:
                 log.warning(f"Bad data in front of the stream: [{bytewise(bytesReceived)}]. "
                             f"Searching for valid header...")
@@ -164,11 +163,12 @@ class PelengTransceiver(SerialTransceiver):
                     startbyteIndex = bytesReceived.find(self.STARTBYTE)
                     if (startbyteIndex == -1):
                         if (len(bytesReceived) < self.HEADER_LEN):
-                            raise BadDataError("Failed to find valid header")
-                        bytesReceived = self.read(self.HEADER_LEN)
+                            raise BadDataError("Failed to find valid header",
+                                               dataname="Header", data=bytesReceived)
+                        bytesReceived = self.readSimple(self.HEADER_LEN)
                         log.warning(f"Try next {self.HEADER_LEN} bytes: [{bytewise(bytesReceived)}]")
                     else: break
-                headerReminder = self.read(startbyteIndex)
+                headerReminder = self.readSimple(startbyteIndex)
                 if (len(headerReminder) < startbyteIndex):
                     raise BadDataError("Bad header", dataname="Header",
                                        data=bytesReceived[startbyteIndex:] + headerReminder)
@@ -176,6 +176,7 @@ class PelengTransceiver(SerialTransceiver):
                 if (self.RFC_CHECK_DISABLED or int.from_bytes(rfc1071(header), byteorder='big') == 0):
                     log.info(f"Found valid header at pos {i * self.HEADER_LEN + startbyteIndex}")
                     return self.__readData(header)
+                else: bytesReceived = self.readSimple(self.HEADER_LEN)
             else: raise SerialCommunicationError("Cannot find header in datastream, too many attempts...")
         # TODO: still have unread data at the end of the serial stream sometimes.
         # scenario that once caused the issue: send 'ms 43 0' without adding a signal value (need to alter the code)
@@ -190,8 +191,9 @@ class PelengTransceiver(SerialTransceiver):
             slog.debug(f"Reply packet [{len(header + data)}]: {bytewise(header + data)}")
             if (self.in_waiting != 0):
                 log.warning(f"Unread data ({self.in_waiting} bytes) is left in a serial datastream")
-                self.reset_input_buffer()
-                log.info(f"Serial input buffer flushed")
+                if (self.FLUSH_UNREAD_DATA):
+                    self.reset_input_buffer()
+                    log.info(f"Serial input buffer flushed")
             return data[:-2] if (not zerobyte) else data[:-3]  # 2 is packet RFC, 1 is zero padding byte
         else:
             raise BadRfcError(f"Bad packet checksum (expected '{bytewise(rfc1071(data[:-2]))}', "
@@ -205,6 +207,7 @@ class PelengTransceiver(SerialTransceiver):
         # unpack header (fixed structure - 6 bytes)
         fields = struct.unpack('< B B H H', header)
         if (fields[1] != self.masterAddress):
+            # FIXME: what is this error?
             raise ValueError(f"Wrong master address (expected '{self.masterAddress}', got '{fields[1]}')")
         datalen = (fields[2] & 0x0FFF) * 2  # extract size in bytes, not 16-bit words
         zerobyte = (fields[2] & 1 << 15) >> 15  # extract EVEN flag (b15 in LSB / b7 in MSB)
