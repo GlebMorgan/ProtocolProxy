@@ -10,7 +10,7 @@ log = Logger("Device")
 
 
 class DeviceError(RuntimeError):
-    """ Firmware-level error, indicate the command sent to the device was not properly executed """
+    """ Firmware-level error, device returned error / wrong behaviour """
 
 
 class DataInvalidError(DeviceError):

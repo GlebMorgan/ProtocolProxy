@@ -6,7 +6,7 @@ from checksums import rfc1071
 from utils import alias
 from utils import bytewise, Logger
 
-# TESTME: does log and slog here and in PelengTransceiver actually connected (they should)
+# FIXME: refactor all logs to be created, stored and controlled from within one place
 log = Logger("Serial")
 slog = Logger("Packets")
 
@@ -56,6 +56,14 @@ class CommandError(RuntimeError):
 
 
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ ERRORS ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ #
+
+# COMMAND PACKET STRUCTURE
+# 1           2     3:4           5:6         7:8       9:...         -3    -2:-1
+# StartByte   ADR   Length|EVEN   HeaderRFC   COMMAND   CommandData   LRC   PacketRFC
+
+# REPLY PACKET STRUCTURE
+# 1           2     3:4           5:6         7          10:...      -3    -2:-1
+# StartByte   ADR   Length|EVEN   HeaderRFC   ACK byte   ReplyData   LRC   PacketRFC
 
 
 class SerialTransceiver(serial.Serial):
@@ -134,7 +142,7 @@ class PelengTransceiver(SerialTransceiver):
         until valid header is found. Raise error otherwise.
         No extra data is grabbed from datastream after valid packet is successfully read.
 
-        :raises: SerialError, SerialReadTimeoutError, BadDataError, RuntimeError
+        :raises: SerialError, SerialReadTimeoutError, BadDataError, BadRfcError
         :return: unwrapped high-level data
         :rtype: bytes
         """
@@ -207,8 +215,7 @@ class PelengTransceiver(SerialTransceiver):
         # unpack header (fixed structure - 6 bytes)
         fields = struct.unpack('< B B H H', header)
         if (fields[1] != self.masterAddress):
-            # FIXME: what is this error?
-            raise ValueError(f"Wrong master address (expected '{self.masterAddress}', got '{fields[1]}')")
+            slog.warning(f"Wrong master address (expected '{self.masterAddress}', got '{fields[1]}')")
         datalen = (fields[2] & 0x0FFF) * 2  # extract size in bytes, not 16-bit words
         zerobyte = (fields[2] & 1 << 15) >> 15  # extract EVEN flag (b15 in LSB / b7 in MSB)
         log.debug(f"ZeroByte: {zerobyte == 1}")
