@@ -2,7 +2,8 @@ import threading
 import time
 import unittest
 
-from utils import Logger, auto_repr, bytewise
+from utils import auto_repr, bytewise
+from logging import Logger
 
 import serial_transceiver
 from serial_transceiver import SerialError, PelengTransceiver, SerialTransceiver

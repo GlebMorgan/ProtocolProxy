@@ -1,7 +1,7 @@
 import struct
 
 from bits import bitsarray, flags
-from utils import Logger
+from logger import Logger
 
 from device import Device, Par, DataInvalidError
 

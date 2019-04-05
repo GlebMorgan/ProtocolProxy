@@ -1,7 +1,8 @@
 from threading import RLock
 from typing import Union, Mapping
 
-from utils import Logger, auto_repr
+from logger import Logger
+from utils import auto_repr
 
 from notifier import Notifier
 
