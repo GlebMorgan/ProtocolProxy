@@ -97,8 +97,19 @@ class SerialTransceiver(serial.Serial):
     def readSimple(self, size=1):
         return super().read(size)
 
-    def handleSerialError(self):  # TODO: PelengTransceiver.handleSerialError()
-        print(f"{self}.handleSerialError() - NotImplemented")
+    @staticmethod
+    def handleSerialError(error):  # TESTME
+        if ("Port is already open." == error.args[0]):
+            log.warning("Attempt opening already opened port - error skipped")
+            return
+        comPortName = error.args[0].split("'", maxsplit=2)[1]
+        if ('PermissionError' in error.args[0]):
+            raise SerialError(f"Cannot open port '{comPortName}' - interface is occupied by another recourse "
+                              "(different app is using that port?)")
+        if ('FileNotFoundError' in error.args[0]):
+            raise SerialError(f"Cannot open port '{comPortName}' - interface does not exist (device unplugged?)")
+        else:
+            raise SerialError(error.args[0])
 
 
 class PelengTransceiver(SerialTransceiver):
