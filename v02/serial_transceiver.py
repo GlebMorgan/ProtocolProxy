@@ -3,10 +3,10 @@ from functools import wraps
 
 import serial
 from checksums import rfc1071
-from utils import alias
-from utils import bytewise, Logger
+from logger import Logger
+from utils import alias, bytewise
 
-# FIXME: refactor all logs to be created, stored and controlled from within one place
+
 log = Logger("Serial")
 slog = Logger("Packets")
 
@@ -78,6 +78,8 @@ class SerialTransceiver(serial.Serial):
     }
 
     def __init__(self, **kwargs):
+        log.setLevel("WARNING")
+
         config = self.DEFAULT_CONFIG
         config.update(kwargs)
         super().__init__(**config)
@@ -105,12 +107,17 @@ class PelengTransceiver(SerialTransceiver):
     STARTBYTE: int = 0x5A
     MASTER_ADR: int = 0  # should be set in reply to host machine
 
+    chch_packet_out = '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
+    chch_command = '01 01 A8 AB AF AA AC AB A3 AA 08'
+    chch_packet_in = '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
+    chch_reply = '01 01 A8 AB AF AA AC AB A3 AA 08'
+
     def __init__(self, device: int, master: int = MASTER_ADR, **kwargs):
         super().__init__(**kwargs)
         self.deviceAddress = device
         self.masterAddress = master
-        # FIXME: make this ▼ 2 constant 'CHSUM_CHECK' + default them to True + change code in places where it is used
-        self.RFC_CHECK_DISABLED = False
+
+        self.CHECK_RFC = True
         self.FLUSH_UNREAD_DATA = False
 
     class addCRC():
@@ -151,7 +158,7 @@ class PelengTransceiver(SerialTransceiver):
 
         # TODO: byteorder here ▼ and everywhere - ?
         if (len(bytesReceived) == self.HEADER_LEN and bytesReceived[0] == self.STARTBYTE and
-                (self.RFC_CHECK_DISABLED or int.from_bytes(rfc1071(bytesReceived), byteorder='big') == 0)):
+                (not self.CHECK_RFC or int.from_bytes(rfc1071(bytesReceived), byteorder='big') == 0)):
             header = bytesReceived
             return self.__readData(header)
         elif (len(bytesReceived) == 0):
@@ -181,7 +188,7 @@ class PelengTransceiver(SerialTransceiver):
                     raise BadDataError("Bad header", dataname="Header",
                                        data=bytesReceived[startbyteIndex:] + headerReminder)
                 header = bytesReceived[startbyteIndex:] + headerReminder
-                if (self.RFC_CHECK_DISABLED or int.from_bytes(rfc1071(header), byteorder='big') == 0):
+                if (not self.CHECK_RFC or int.from_bytes(rfc1071(header), byteorder='big') == 0):
                     log.info(f"Found valid header at pos {i * self.HEADER_LEN + startbyteIndex}")
                     return self.__readData(header)
                 else: bytesReceived = self.readSimple(self.HEADER_LEN)
@@ -195,7 +202,7 @@ class PelengTransceiver(SerialTransceiver):
         if (len(data) < datalen + 2):
             raise BadDataError(f"Bad packet (data too small, [{len(data)}] out of [{datalen + 2}])",
                                dataname="Packet", data=header + data)
-        if (self.RFC_CHECK_DISABLED or int.from_bytes(rfc1071(header + data), byteorder='big') == 0):
+        if (not self.CHECK_RFC or int.from_bytes(rfc1071(header + data), byteorder='big') == 0):
             slog.debug(f"Reply packet [{len(header + data)}]: {bytewise(header + data)}")
             if (self.in_waiting != 0):
                 log.warning(f"Unread data ({self.in_waiting} bytes) is left in a serial datastream")
