@@ -10,9 +10,10 @@ from utils import legacy, bytewise
 from device import Device, DataInvalidError
 from notifier import Notifier
 from serial_transceiver import (SerialTransceiver, PelengTransceiver,
-    SerialError, SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
+                                SerialError, SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
 
 log = Logger("App")
+tlog = Logger("Transactions")
 
 
 class ApplicationError(RuntimeError):
@@ -90,6 +91,11 @@ class App(Notifier):
         self.commThread: threading.Thread = None
         self.stopCommEvent: threading.Event = None
         self.commRunning: bool = False
+        self.LoggerLevels = {
+            'App': 'DEBUG',
+            'Transactions': 'DEBUG',
+            'Packets': 'DEBUG',
+        }
 
         self.device: Device = None  # while device is None, comm interfaces are not initialized
         self.interactWithNativeSoft: bool = self.CONFIG.NATIVE_SOFT_COMM_MODE
@@ -104,6 +110,7 @@ class App(Notifier):
         self.init()
 
     def init(self):
+        for name, level in self.LoggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
 
@@ -166,29 +173,29 @@ class App(Notifier):
         except SerialReadTimeoutError:
             self.appInt.nTimeouts += 1
             if self.appInt.nTimeouts == 1:
-                log.warning(f"No reply from {subject} native control soft...")
+                tlog.warning(f"No reply from {subject} native control soft...")
             else:
-                log.debug(f"No reply from {subject} native control soft [{self.appInt.nTimeouts}]")
+                tlog.debug(f"No reply from {subject} native control soft [{self.appInt.nTimeouts}]")
         except BadDataError as e:
-            log.error(f"Received bad data from {subject} native control soft "
-                      f"(wrong data source is connected to {self.appInt.token}?)")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.error(f"Received bad data from {subject} native control soft "
+                       f"(wrong data source is connected to {self.appInt.token}?)")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         except BadRfcError as e:
-            log.error(f"Checksum validation failed for packet from {subject} native control soft")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.error(f"Checksum validation failed for packet from {subject} native control soft")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         except DataInvalidError as e:
-            log.warning(f"Invalid data received from {subject} native control soft (app misoperation?)")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.warning(f"Invalid data received from {subject} native control soft (app misoperation?)")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         else:
             if self.appInt.nTimeouts:
-                log.info(f"Found data from {subject} native control soft after {self.appInt.nTimeouts} timeouts")
+                tlog.info(f"Found data from {subject} native control soft after {self.appInt.nTimeouts} timeouts")
                 self.appInt.nTimeouts = 0
             if self.nativeSoftConnEstablished is False: self.nativeSoftConnEstablished = True
             return
-        log.info(f"Using {subject} idle payload: [{bytewise(self.device.IDLE_PAYLOAD)}]")
+        tlog.info(f"Using {subject} idle payload: [{bytewise(self.device.IDLE_PAYLOAD)}]")
         self.nativeData = self.device.IDLE_PAYLOAD
 
     @contextmanager
@@ -199,33 +206,33 @@ class App(Notifier):
         except SerialReadTimeoutError:
             self.devInt.nTimeouts += 1
             if self.devInt.nTimeouts == 1:
-                log.warning(f"No reply from {subject} device...")
+                tlog.warning(f"No reply from {subject} device...")
             else:
-                log.debug(f"No reply from {subject} device [{self.devInt.nTimeouts}]")
+                tlog.debug(f"No reply from {subject} device [{self.devInt.nTimeouts}]")
             # TODO: redesign this ▼ to set new timer interval to 5x transaction period
             #  when scheduler will be used instead of 'for loop' for triggering transactions
             stopEvent.wait(self.CONFIG.SMALL_TIMEOUT_DELAY if self.devInt.nTimeouts < self.CONFIG.NO_REPLY_HOPELESS
                            else self.CONFIG.BIG_TIMEOUT_DELAY)
         except BadDataError as e:
-            log.error(f"Received corrupted data from '{subject}' device")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.error(f"Received corrupted data from '{subject}' device")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         except BadRfcError as e:
-            log.error(f"Checksum validation failed for packet from {subject} device")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.error(f"Checksum validation failed for packet from {subject} device")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         except DataInvalidError as e:
-            log.error(f"Invalid data received from {subject} device")
-            log.info("Packet discarded")
-            log.showError(e, level='debug')
+            tlog.error(f"Invalid data received from {subject} device")
+            tlog.info("Packet discarded")
+            tlog.showError(e, level='debug')
         else:
             if self.devInt.nTimeouts:
-                log.info(f"Found data from {subject} device after {self.devInt.nTimeouts} timeouts")
+                tlog.info(f"Found data from {subject} device after {self.devInt.nTimeouts} timeouts")
                 self.devInt.nTimeouts = 0
             return
 
     def commLoop(self, stopEvent):
-        #TODO: introduce condition objects that will contain state of communication for native control soft and device
+        # TODO: introduce condition objects that will contain state of communication for native control soft and device
         #      Output transactions on demand; initially show state changes only (as well as errors/warnings)
         #      State objects are defined in app, but stored in serial objects
         # FIXME: flush buffer if too many bytes are left in a datastream (to prevent overflow)
@@ -239,7 +246,6 @@ class App(Notifier):
                         log.info("Received stop communication command.")
                         break
                     with self.device.lock:
-
                         with self.controlSoftErrorsHandler():
                             if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
                             else: self.nativeData = self.device.IDLE_PAYLOAD
@@ -249,9 +255,9 @@ class App(Notifier):
                         try:
                             self.devInt.sendPacket(self.deviceData)
                         except SerialWriteTimeoutError as e:
-                            log.fatal(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                            log.showStackTrace(e, level='debug')
-                            break  # TODO: what needs to be done when unexpected error happens [2]?
+                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                            tlog.showStackTrace(e, level='debug')
+                            continue  # TODO: what needs to be done when unexpected error happens [2]?
 
                         with self.deviceErrorsHandler(stopEvent):
                             self.deviceData = self.devInt.receivePacket()
@@ -263,18 +269,18 @@ class App(Notifier):
                         except SerialWriteTimeoutError as e:
                             if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
                                 if self.appInt.nTimeouts < 2:
-                                    log.info(f"Waiting for {self.device.name} native control soft to launch")
+                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
                             else:
-                                log.fatal(f"Failed to send data over {self.appInt.token} "
-                                          f"(native communication soft disconnected?)")
-                                log.showStackTrace(e, level='debug')
-                                break  # TODO: what needs to be done when unexpected error happens [3]?
+                                tlog.error(f"Failed to send data over {self.appInt.token} "
+                                           f"(native communication soft disconnected?)")
+                                tlog.showStackTrace(e, level='debug')
+                                continue  # TODO: what needs to be done when unexpected error happens [3]?
 
                         # TODO: self.ui.update()
 
             except SerialError as e:
-                log.fatal(f"Transaction failed: {e}")
-                log.showStackTrace(e, level='debug')
+                tlog.fatal(f"Transaction failed: {e}")
+                tlog.showStackTrace(e, level='debug')
                 # TODO: what needs to be done when unexpected error happens [1]?
             finally:
                 self.appInt.nTimeouts = self.devInt.nTimeouts = 0
@@ -282,27 +288,60 @@ class App(Notifier):
                 self.commRunning = False
                 log.info("Communication stopped")
 
+    def suppressLoggers(self, mode=None):
+        isAltered = not all((Logger.LOGGERS[loggerName].level == level
+                             for loggerName, level in self.LoggerLevels.items()))
+        if mode is None:
+            # ▼ return whether loggers was suppressed (True) or they are as defined in self.LoggerLevels (False)
+            return isAltered
+        if mode == 'kill':  # disable all loggers completely
+            for loggerName in self.LoggerLevels:
+                Logger.LOGGERS[loggerName].disabled = True
+            return
+        elif isAltered:  # enable all loggers back
+            for loggerName in self.LoggerLevels:
+                Logger.LOGGERS[loggerName].disabled = False
+
+        if mode is False or mode == 'False':  # assign levels according to self.LoggerLevels
+            for loggerName, level in self.LoggerLevels.items(): Logger.LOGGERS[loggerName].setLevel(level)
+        elif mode is True or mode == 'True':  # set transactions-related loggers to lower level
+            Logger.LOGGERS["Transactions"].setLevel('WARNING')
+            Logger.LOGGERS["Packets"].setLevel('ERROR')
+        elif mode in Logger.LEVELS:  # set all loggers to given level
+            for loggerName in self.LoggerLevels: Logger.LOGGERS[loggerName].setLevel(mode)
+        else:
+            raise ValueError(f"Invalid logging mode '{mode}'")
+
+    @staticmethod
+    def setTransactionOutputLevel(level):
+        tlog.setLevel(level)
+        Logger.LOGGERS['Packets'].setLevel(level)
+
     def runCmd(self):
         # FIXME: suppress output to enter commands
         cmd = Logger("AppCMD", mode='noFormatting')
 
         commandsHelp = {
-            'h':    ("h [command]", "show help"),
+            'h': ("h [command]", "show help"),
             'show': ("show [int|dev|config|app]", "show current state of specified parameter"),
-            's':    ("s", "start/stop communication"),
-            'com':  ("com <in|out> <ComPort_number>", "change internal/device com port"),
-            'p':    ("p <device_name>", "change protocol"),
-            'n':    ("n", "enable/disable transactions with native control soft")
+            's': ("s", "start/stop communication"),
+            'com': ("com <in|out> <ComPort_number>", "change internal/device com port"),
+            'p': ("p <device_name>", "change protocol"),
+            'n': ("n", "enable/disable transactions with native control soft")
         }
 
         cmd.info(linesep * 3)
-        cmd.info(f"——— Protocol proxy v{self.VERSION} CMD interface ———".center(80))
+        cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
         cmd.info(f"Available protocols: {', '.join(self.DEVICES)}")
 
         while True:
             try:
                 userinput = input('--> ')
-                if (userinput.strip() == ''): continue
+                if (userinput.strip() == ''):
+                    if self.commRunning:
+                        self.suppressLoggers(True)
+                        cmd.warning("————— Transactions logging output suppressed —————".center(80))
+                    continue
                 params = userinput.strip().split()
                 command = params[0]
 
@@ -345,8 +384,12 @@ class App(Notifier):
                     raise ApplicationError("Target device is not defined. Define with 'p <deviceName>'")
 
                 elif command == 's':
-                    if self.commRunning: self.stop()
-                    else: self.start()
+                    if self.commRunning:
+                        self.stop()
+                        cmd.warning("————— Transactions logging output restored —————".center(80))
+                        self.suppressLoggers(False)
+                    else:
+                        self.start()
 
                 elif command in ('n', 'native'):
                     self.interactWithNativeSoft = not self.interactWithNativeSoft
@@ -380,6 +423,18 @@ class App(Notifier):
                         raise CommandError(f"No such device: '{newDeviceName}'")
                     self.setProtocol(newDeviceName)
 
+                elif command in ('so', 'supp', 'sl'):
+                    if not self.commRunning:
+                        raise CommandError(f"Output suppression is used only while communication is running")
+                    if len(params) > 1:
+                        suppressionMode = params[1]
+                        try:
+                            self.suppressLoggers(suppressionMode)
+                        except ValueError as e:
+                            raise ApplicationError(e)
+                    else:
+                        cmd.warning("————— Transactions logging output restored —————".center(80))
+                        self.suppressLoggers(False)
                 else: raise CommandError(f"Wrong command '{command}'")
 
             except ApplicationError as e: cmd.showError(e)
