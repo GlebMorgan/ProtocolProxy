@@ -50,11 +50,6 @@ class BadLrcError(SerialCommunicationError):
     """ DSP protocol: LRC checksum validation failed """
 
 
-# TODO: move def of this error to Application class
-class CommandError(RuntimeError):
-    """ Application-level error, indicates invalid command signature / parameters / semantics """
-
-
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ ERRORS ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ #
 
 # COMMAND PACKET STRUCTURE
@@ -67,8 +62,8 @@ class CommandError(RuntimeError):
 
 
 class SerialTransceiver(serial.Serial):
+    INTERFACE_NAME = 'serial'
     DEFAULT_CONFIG = {
-        'port': 'COM1',
         'baudrate': 921600,
         'bytesize': serial.EIGHTBITS,
         'parity': serial.PARITY_NONE,
@@ -78,11 +73,24 @@ class SerialTransceiver(serial.Serial):
     }
 
     def __init__(self, **kwargs):
-        log.setLevel("WARNING")
-
         config = self.DEFAULT_CONFIG
         config.update(kwargs)
         super().__init__(**config)
+        log.setLevel("WARNING")
+        self.nTimeouts = 0
+
+    @property
+    def token(self):
+        if not self.port: return self.INTERFACE_NAME.capitalize() + ': ' + 'closed'
+        return self.INTERFACE_NAME.capitalize() + ': ' + self.port
+
+    def __enter__(self):
+        try:
+            this = super().__enter__()
+        except SerialError as e:
+            self.handleSerialError(e)
+            return self
+        return this
 
     def read(self, size=1):
         data = super().read(size)
@@ -108,8 +116,7 @@ class SerialTransceiver(serial.Serial):
                               "(different app is using that port?)")
         if ('FileNotFoundError' in error.args[0]):
             raise SerialError(f"Cannot open port '{comPortName}' - interface does not exist (device unplugged?)")
-        else:
-            raise SerialError(error.args[0])
+        else: return False
 
 
 class PelengTransceiver(SerialTransceiver):
@@ -123,7 +130,7 @@ class PelengTransceiver(SerialTransceiver):
     chch_packet_in = '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
     chch_reply = '01 01 A8 AB AF AA AC AB A3 AA 08'
 
-    def __init__(self, device: int, master: int = MASTER_ADR, **kwargs):
+    def __init__(self, device: int = None, master: int = MASTER_ADR, **kwargs):
         super().__init__(**kwargs)
         self.deviceAddress = device
         self.masterAddress = master

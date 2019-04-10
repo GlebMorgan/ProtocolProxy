@@ -1,6 +1,8 @@
 import serial
-from utils import bytewise, Logger
+from utils import bytewise
+from logger import Logger
 
+from app import ProtocolLoader
 from serial_transceiver import SerialTransceiver, PelengTransceiver, SerialReadTimeoutError
 
 s = PelengTransceiver(device=12, port='COM10', baudrate=921600, parity='N', timeout=0.5, write_timeout=0.5)
@@ -107,6 +109,17 @@ def _testUtf8Char():
         print(chr(code))
 
 
+def test_protocolLoader():
+    import importlib
+    import os
+    Logger.LOGGERS['Device'].disabled = True
+    FOLDER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = "devices"
+    p = ProtocolLoader(FOLDER, path)
+    print(p)
+    print(p['invalid_class_test'])
+
+
 if __name__ == '__main__':
     functions = tuple(
             member for name, member in locals().items() if
@@ -116,4 +129,4 @@ if __name__ == '__main__':
     for f in functions: print(f"{' ' * 4}{f}")
     print()
 
-    functions[-3]()
+    functions[-1]()

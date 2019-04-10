@@ -68,10 +68,12 @@ class Par(Notifier):
 
 class Device:
     DEVICE_ADDRESS: int
-    PARITY: str
-    BAUDRATE: int
-    DEFAULT_PAYLOAD: bytes
-    API: Mapping[str, Par] = {}
+    NATIVE_PARITY: str
+    NATIVE_BAUDRATE: int
+    DEFAULT_PAYLOAD: bytes  # accepted for future redesigns — use 'IDLE_PAYLOAD' instead
+    IDLE_PAYLOAD: bytes  # should not change device state when sent to device (init with default payload)
+    COMMUNICATION_INTERFACE: str  # name of physical communication interface
+    API: Mapping[str, Par] = {}  # device control external API
 
     def wrap(self, *args, **kwargs):
         return NotImplemented
@@ -91,9 +93,18 @@ class Device:
             for parName, checkValue in params:
                 getattr(self.__class__, parName).ack(checkValue)
 
+    def configureInterface(self, applicationInterface, deviceInterface):
+        if (self.COMMUNICATION_INTERFACE == 'serial'):
+            deviceInterface.deviceAddress = self.DEVICE_ADDRESS
+            applicationInterface.parity = self.NATIVE_PARITY
+            applicationInterface.baudrate = self.NATIVE_BAUDRATE
+            log.info(f"Interfaces {applicationInterface.__class__.__name__} and {deviceInterface.__class__.__name__} "
+                     f"reconfigured for {self.name} protocol")
+
     # FIXME: assign proper type hints to appCom and devCom
     def __init__(self):
         self.lock = RLock()
+        self.name = self.__class__.__name__
         # TODO: fill self.API with parameters (iterate over self)
 
     def __iter__(self):

@@ -9,10 +9,12 @@ log = Logger("SONY")
 
 
 class SONY(Device):
+    COMMUNICATION_INTERFACE = 'serial'
     DEVICE_ADDRESS: int = 12
-    PARITY: str = 'N'
-    BAUDRATE: int = 921600
+    NATIVE_PARITY: str = 'N'
+    NATIVE_BAUDRATE: int = 9600
     DEFAULT_PAYLOAD: bytes = b'\xFF' * 16
+    IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
     POWER = Par('POWER', bool)
     RESET = Par('RESET', bool)
@@ -37,9 +39,11 @@ class SONY(Device):
         return packet[2:]
 
     def sendNative(self, com, data):
+        if data == b'\x00' * 16: data = self.IDLE_PAYLOAD
         com.write(data)
 
     # NOTE: 'com' lacks type annotation only because of requirement to create dependency just 4 that...
+    # TODO: Create interface in this class for this purpose (ToGoogle: how to properly type-annotate interfaces)
     def receiveNative(self, com) -> bytes:
         inputBuffer = b''.join(self.readUpToFirstFF(com))
         if (com.in_waiting != 0):
