@@ -68,8 +68,10 @@ class Par(Notifier):
 
 class Device:
     DEVICE_ADDRESS: int
+    DEVICE_MAX_INPUT_BUFFER_SIZE = 255
     NATIVE_PARITY: str
     NATIVE_BAUDRATE: int
+    NATIVE_MAX_INPUT_BUFFER_SIZE = 255
     DEFAULT_PAYLOAD: bytes  # accepted for future redesigns — use 'IDLE_PAYLOAD' instead
     IDLE_PAYLOAD: bytes  # should not change device state when sent to device (init with default payload)
     COMMUNICATION_INTERFACE: str  # name of physical communication interface

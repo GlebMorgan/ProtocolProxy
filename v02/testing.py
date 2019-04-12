@@ -1,11 +1,13 @@
 import threading
 import time
 import unittest
+from logger import Logger
 
 from utils import auto_repr, bytewise
-from logging import Logger
 
 import serial_transceiver
+from device import DeviceError
+from devices.sony import SONY, DataInvalidError
 from serial_transceiver import SerialError, PelengTransceiver, SerialTransceiver
 
 log = Logger("Tests")
@@ -18,7 +20,7 @@ def testRaiseRuntimeError():
 class DeviceMock:
     def __init__(self, adr, commandsAndReplies, stopEvent):
         try: self.tr = SerialTransceiver(port='COM11')
-        except SerialError as e: log.warn(e.args[0])
+        except SerialError as e: print("WARNING!" + e.args[0])
         else: self.tr.close()
 
         self.commandsAndReplies = commandsAndReplies
@@ -39,15 +41,15 @@ class DeviceMock:
                     print("Stopping Device Mock transceiver")
                     return
                 if (self.tr.in_waiting):
-                    log.info(f"Detected packet, {self.tr.in_waiting} bytes")
                     command = self.tr.read(1)
-                    log.info(f"Command received: {bytewise(command)}")
-                    reply = next(msgs)[1]
+                    print(f"Command received: {bytewise(command)}")
+                    try: reply = next(msgs)[1]
+                    except StopIteration: return
                     self.tr.write(reply)
 
                 elif self.stopEvent.wait(0.1):
                     return
-            else: log.warning("DeviceMock transceiver communication loop - too many iterations")
+            else: print("ERROR!: DeviceMock transceiver communication loop - too many iterations")
         self.stopEvent.clear()
 
     def __repr__(self):
@@ -55,12 +57,12 @@ class DeviceMock:
                                f"running={self.thread.is_alive()}}}")
 
 
-class Test_PelengTransceiver(unittest.TestCase):
+class Test(unittest.TestCase):
 
     # FIXME: terrible test design - refactor everything :(
 
     def test_receivePacket(self):
-        tr = PelengTransceiver(device=12, port='COM10', timeout=0.5)
+        tr = PelengTransceiver(device=12, port='COM10', timeout=0.2)
         stopEvent = threading.Event()
 
         chch_command = '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
@@ -74,7 +76,8 @@ class Test_PelengTransceiver(unittest.TestCase):
             ('bad_startbyte', 'A5 00 06 80 54 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('chch', '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('bad_header_and_rfc', 'A5 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
-            ('bad_adr', '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
+            ('bad_adr', '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52' +
+                        '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('bad_adr_and_rfc', '5A 0C 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('bad_len', '5A 00 09 00 9C FF 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('bad_len_and_rfc', '5A 00 09 00 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
@@ -85,7 +88,8 @@ class Test_PelengTransceiver(unittest.TestCase):
             ('chch', '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('chch_x10', '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52 '*10),
             ('no_data', '5A 00 00 00 A5 FF 00 00'),
-            ('no_data_no_zerobyte', '5A 00 01 80 A4 7F FF 00 FF'),
+            # ('no_data_no_zerobyte', '5A 00 01 80 A4 7F FF 00 FF'),
+            ('completely_bad_data', '5A '*25 + '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
             ('one_byte_valid_data', '5A 00 01 80 A4 7F FF 00 00 FF'),
             ('chch', '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'),
         ]
@@ -96,16 +100,19 @@ class Test_PelengTransceiver(unittest.TestCase):
 
         def sendCommand():
             tr.write(b'!')
-            print()
-            return tr.receivePacket()
+            print('sendCommand')
+            res = tr.receivePacket()
+            return res
 
         try:
 
             dev.start()
-            time.sleep(0.5)
-            print(dev)
+            time.sleep(0.2)
+            Logger.LOGGERS['Serial'].setLevel('DEBUG')
 
-            input('Press smth to start! >>>')
+            print(Logger.LOGGERS['Serial'].levelName)
+
+            # input('Press smth to start! >>>')
 
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
             self.assertRaises(serial_transceiver.BadRfcError, sendCommand)  # 'bad_rfc'
@@ -114,7 +121,7 @@ class Test_PelengTransceiver(unittest.TestCase):
             self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_startbyte'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
             self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_header_and_rfc'
-            self.assertRaises(ValueError, sendCommand)  # 'bad_adr'
+            self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'bad_adr'
             self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_adr_and_rfc'
             self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_len'
             self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_len_and_rfc'
@@ -129,15 +136,164 @@ class Test_PelengTransceiver(unittest.TestCase):
                 print(f' i={i}')
                 self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch_x10'
             self.assertEqual(b'', sendCommand())  # 'no_data'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'no_data_no_zerobyte'
+            # self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'no_data_no_zerobyte'
+            self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # completely_bad_data
             self.assertEqual(b'\xFF', sendCommand())  # 'no_data'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
 
-        except serial_transceiver.BadDataError as e: log.showStackTrace(e)
+        except Exception as e:
+            log.showStackTrace(e)
+            raise
         finally:
             stopEvent.set()
             dev.thread.join()
             time.sleep(0.01)
+
+
+    def test_SONY_tx_rx(self):
+        print("\nTest_receiveNative")
+
+        class MockSerialResource():
+            def __init__(self, data:bytes):
+                self.data = data
+                self.received = None
+
+            @property
+            def in_waiting(self):
+                return len(self.data)
+
+            def read(self, size=1):
+                if size > 0 and self.data:
+                    result = self.data[:size]
+                    self.data = self.data[size:]
+                    # if size == 1: result = result.to_bytes(1, 'big')
+                    return result
+                return b''
+
+            def write(self, data):
+                print(f"Written {len(data)} bytes: {bytewise(data)} to MockSerialResource")
+                self.received = data
+                return len(data)
+
+        d = SONY()
+
+        packets = (
+            '88 30 01 FF',
+            '80 38 FF',
+            'FF FF 81 01 00 01 FF',
+            '88 01 00 01 FF 32',
+            '81 09 00 02 FF',
+            '81 22 FF',
+            '81 01 04 47 01 02 03 04 01 02 03 04 FF',
+            'FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 81 81 81 81 FF 56',
+        )
+
+        answers = (
+            '88 30 01 FF',
+            '80 38 FF',
+            '81 01 00 01 FF',
+            '88 01 00 01 FF',
+            '81 09 00 02 FF',
+            '81 22 FF',
+            '81 01 04 47 01 02 03 04 01 02 03 04 FF',
+            '81 81 81 81 FF',
+        )
+
+        badPackets = (
+            '78 30 01 FF',
+            '00 FF',
+            '81 00 00 00'
+        )
+
+        packets = tuple(bytes.fromhex(msg) for msg in packets)
+        answers = tuple(bytes.fromhex(msg) for msg in answers)
+        badPackets = tuple(bytes.fromhex(msg) for msg in badPackets)
+
+        for packet, answer in zip(packets, answers):
+            print(f"Packet: {bytewise(packet)}")
+            self.assertEqual(d.receiveNative(MockSerialResource(packet)), answer)
+
+        with self.assertRaises(DataInvalidError):
+            d.receiveNative(MockSerialResource(badPackets[0]))
+        with self.assertRaises(DataInvalidError):
+            d.receiveNative(MockSerialResource(badPackets[1]))
+        with self.assertRaises(DataInvalidError):
+            d.receiveNative(MockSerialResource(badPackets[2]))
+
+        print()
+        print("End testing SONY RX")
+        print('—'*80)
+
+        # —————————————————————————————————————————————————————————————————————————————————— #
+
+        print("\nTest_sendNative")
+
+        packets = (
+            '00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 0
+            '01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 1
+            '00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 2
+            '00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 3
+            '01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 4
+            '01 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 5
+            '01 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 6
+            '01 FF',  # 7
+            'FF',  # 8
+            '',  # 9
+            'FF '*40,  # 10
+            '01 00 80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF',  # 11
+            '01 00 80 FF DD 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 12
+            '01 00 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF',  # 13
+        )
+
+        def tx(i):
+            p = packets[i]
+            print(f'Packet #{i}: {p}')
+            r = MockSerialResource(bytes.fromhex(p))
+            toSend = d.unwrap(r.data)
+            d.sendNative(r, toSend)
+            print()
+            return r.received
+
+        self.assertEqual(d.__class__.POWER.inSync, False)
+        self.assertEqual(b'\xFF', tx(0))
+        self.assertEqual(d.__class__.POWER.inSync, True)
+        with self.assertRaises(DeviceError): tx(1)
+        self.assertEqual(b'\xFF', tx(2))
+        self.assertEqual(b'\xFF', tx(3))
+        self.assertEqual(d.CNT_OUT, 1)
+        d.POWER = True
+        self.assertEqual(d.__class__.POWER.inSync, False)
+        tx(4)
+        self.assertEqual(d.POWER, True)
+        self.assertEqual(d.__class__.POWER.inSync, True)
+        with self.assertRaises(DataInvalidError): tx(5)
+        with self.assertRaises(DataInvalidError): tx(6)
+        with self.assertRaises(DataInvalidError): tx(7)
+        with self.assertRaises(DataInvalidError): tx(8)
+        with self.assertRaises(DataInvalidError): tx(9)
+        with self.assertRaises(DataInvalidError): tx(10)
+        self.assertEqual(bytes.fromhex('80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF'), tx(11))
+        self.assertEqual(bytes.fromhex('80 FF'), tx(12))
+        self.assertEqual(bytes.fromhex('FF'), tx(13))
+        print()
+        print("End testing SONY TX")
+        print('—'*80)
+
+    def test_SONY_wrap(self):
+        print("\nTest_wrap")
+        d = SONY()
+
+        self.assertEqual(d.CNT_IN, 0)
+        self.assertEqual(d.wrap(d.IDLE_PAYLOAD), bytes.fromhex('00 00')+d.IDLE_PAYLOAD)
+        self.assertEqual(d.CNT_IN, 0)
+        self.assertEqual(d.wrap(bytes.fromhex('88 30 01 FF')), bytes.fromhex('00 01 88 30 01 FF'))
+        self.assertEqual(d.CNT_IN, 1)
+        self.assertEqual(d.wrap(d.IDLE_PAYLOAD), bytes.fromhex('00 01')+d.IDLE_PAYLOAD)
+        self.assertEqual(d.CNT_IN, 1)
+
+
+
+
 
 
 if __name__ == '__main__':

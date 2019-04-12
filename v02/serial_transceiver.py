@@ -24,15 +24,17 @@ class SerialReadTimeoutError(SerialError):
     """ No data is received for 'Serial().timeout' seconds """
 
 
+class AddressMismatchError(SerialError):
+    """ Address defined in header does not match with host address """
+
+
 class SerialCommunicationError(SerialError):
     """ Communication-level error, indicate failure in packet transmission process """
     __slots__ = ()
 
     def __init__(self, *args, data=None, dataname=None):
         if (data is not None):
-            if (dataname is None):
-                log.warning(f"In call to {self.__class__} - 'dataname' attribute not specified")
-                self.dataname = "Analyzed data"
+            if (dataname is None): self.dataname = "Bytes"
             else: self.dataname = dataname
             self.data = data
         super().__init__(*args)
@@ -106,16 +108,17 @@ class SerialTransceiver(serial.Serial):
         return super().read(size)
 
     @staticmethod
-    def handleSerialError(error):  # TESTME
+    def handleSerialError(error):
         if ("Port is already open." == error.args[0]):
             log.warning("Attempt opening already opened port - error skipped")
             return
         comPortName = error.args[0].split("'", maxsplit=2)[1]
         if ('PermissionError' in error.args[0]):
-            raise SerialError(f"Cannot open port '{comPortName}' - interface is occupied by another recourse "
-                              "(different app is using that port?)")
+            raise SerialCommunicationError(f"Cannot open port '{comPortName}' - interface is occupied "
+                                           f"by another recourse (different app is using that port?)")
         if ('FileNotFoundError' in error.args[0]):
-            raise SerialError(f"Cannot open port '{comPortName}' - interface does not exist (device unplugged?)")
+            raise SerialCommunicationError(f"Cannot open port '{comPortName}' - "
+                                           f"interface does not exist (device unplugged?)")
         else: return False
 
 
@@ -137,6 +140,7 @@ class PelengTransceiver(SerialTransceiver):
 
         self.CHECK_RFC = True
         self.FLUSH_UNREAD_DATA = False
+        self.ADDRESS_MISMATCH_ACTION = 'WARN&DENY'
 
     class addCRC():
         """Decorator to sendPacket() method, appending LRC byte to msg"""
@@ -172,13 +176,15 @@ class PelengTransceiver(SerialTransceiver):
         :rtype: bytes
         """
 
-        bytesReceived = self.read(self.HEADER_LEN)
+        bytesReceived = self.readSimple(self.HEADER_LEN)
 
         # TODO: byteorder here ▼ and everywhere - ?
         if (len(bytesReceived) == self.HEADER_LEN and bytesReceived[0] == self.STARTBYTE and
                 (not self.CHECK_RFC or int.from_bytes(rfc1071(bytesReceived), byteorder='big') == 0)):
             header = bytesReceived
-            return self.__readData(header)
+            try:
+                return self.__readData(header)
+            except AddressMismatchError: return self.receivePacket()
         elif (len(bytesReceived) == 0):
             raise SerialReadTimeoutError("No reply")
         elif (len(bytesReceived) < self.HEADER_LEN):
@@ -191,28 +197,30 @@ class PelengTransceiver(SerialTransceiver):
             else:
                 log.warning(f"Bad data in front of the stream: [{bytewise(bytesReceived)}]. "
                             f"Searching for valid header...")
+            header = bytesReceived
             for i in range(1, 100):  # TODO: limit infinite loop in a better way
                 while True:
-                    startbyteIndex = bytesReceived.find(self.STARTBYTE)
+                    startbyteIndex = header.find(self.STARTBYTE, 1)  # ignore byte at position 0, it is not a startbyte
                     if (startbyteIndex == -1):
-                        if (len(bytesReceived) < self.HEADER_LEN):
+                        header = self.readSimple(self.HEADER_LEN)
+                        log.debug(f"Try next {self.HEADER_LEN} bytes: [{bytewise(header)}]")
+                        if (len(header) < self.HEADER_LEN):
                             raise BadDataError("Failed to find valid header",
-                                               dataname="Header", data=bytesReceived)
-                        bytesReceived = self.readSimple(self.HEADER_LEN)
-                        log.warning(f"Try next {self.HEADER_LEN} bytes: [{bytewise(bytesReceived)}]")
+                                               dataname="Header", data=header)
+
                     else: break
                 headerReminder = self.readSimple(startbyteIndex)
+                header = header[startbyteIndex:] + headerReminder
+                log.debug(f"Try appending {startbyteIndex} more bytes: [{bytewise(header)}]")
                 if (len(headerReminder) < startbyteIndex):
-                    raise BadDataError("Bad header", dataname="Header",
-                                       data=bytesReceived[startbyteIndex:] + headerReminder)
-                header = bytesReceived[startbyteIndex:] + headerReminder
+                    raise BadDataError("Bad header", dataname="Header", data=header)
                 if (not self.CHECK_RFC or int.from_bytes(rfc1071(header), byteorder='big') == 0):
                     log.info(f"Found valid header at pos {i * self.HEADER_LEN + startbyteIndex}")
-                    return self.__readData(header)
-                else: bytesReceived = self.readSimple(self.HEADER_LEN)
+                    try: return self.__readData(header)
+                    except AddressMismatchError: self.receivePacket()
             else: raise SerialCommunicationError("Cannot find header in datastream, too many attempts...")
-        # TODO: still have unread data at the end of the serial stream sometimes.
-        # scenario that once caused the issue: send 'ms 43 0' without adding a signal value (need to alter the code)
+        # TODO: Still have unread data at the end of the serial stream sometimes.
+        #       Action that once caused the issue: sent 'ms 43 0' without adding a signal value (need to alter the code)
 
     def __readData(self, header):
         datalen, zerobyte = self.__parseHeader(header)
@@ -236,14 +244,22 @@ class PelengTransceiver(SerialTransceiver):
     def __parseHeader(self, header):
         assert (len(header) == self.HEADER_LEN)
         assert (header[0] == self.STARTBYTE)
-
         # unpack header (fixed structure - 6 bytes)
         fields = struct.unpack('< B B H H', header)
-        if (fields[1] != self.masterAddress):
-            slog.warning(f"Wrong master address (expected '{self.masterAddress}', got '{fields[1]}')")
         datalen = (fields[2] & 0x0FFF) * 2  # extract size in bytes, not 16-bit words
         zerobyte = (fields[2] & 1 << 15) >> 15  # extract EVEN flag (b15 in LSB / b7 in MSB)
         log.debug(f"ZeroByte: {zerobyte == 1}")
+        if (fields[1] != self.masterAddress):
+            message = f"Unexpected master address (expected '{self.masterAddress}', got '{fields[1]}')"
+            if self.ADDRESS_MISMATCH_ACTION in ('WARN&DENY', 'WARN'):
+                log.warning(message)
+            if self.ADDRESS_MISMATCH_ACTION in ('WARN&DENY', 'DENY'):
+                # read current packet to the end, reject it and restart receivePacket method
+                try: self.read(datalen + 2)
+                except SerialError: pass
+                raise AddressMismatchError(fields[1])
+            elif self.ADDRESS_MISMATCH_ACTION == 'ERROR':  # interrupt transaction — raise SerialCommunicationError
+                raise SerialCommunicationError(message)
         return datalen, zerobyte
 
     @addCRC(AUTO_LRC)
