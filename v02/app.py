@@ -151,6 +151,9 @@ class App(Notifier):
             self.device.configureInterface(self.appInt, self.devInt)
 
     def start(self):
+        if self.commThread:
+            log.warning("Communication is already launched — ignoring command")
+            return
         if not self.devInt: raise ApplicationError("Target device is not set")
         log.info(f"Starting transactions between {self.device.name} via '{self.devInt.token}' "
                  f"and native control software via '{self.appInt.token}'")
@@ -161,10 +164,14 @@ class App(Notifier):
         self.commThread.start()
 
     def stop(self):
+        if not self.commThread:
+            log.warning("Communication is already stopped — ignoring command")
+            return
         log.info("Interrupting communication...")
         self.stopCommEvent.set()
         self.commThread.join()
         self.stopCommEvent.clear()
+        self.commThread = None
 
     @contextmanager
     def controlSoftErrorsHandler(self):
@@ -253,7 +260,6 @@ class App(Notifier):
                     self.commRunning = True
                     log.info("Communication launched")
                     while True:  # TODO: replace this loop with proper timing-based scheduler
-                        # stopEvent.wait(0.01)  # FIXME: Delete this! (temp debug code)
                         self.nativeData = self.deviceData = None
                         if (stopEvent.is_set()):
                             log.info("Received stop communication command.")
@@ -341,6 +347,7 @@ class App(Notifier):
             'h': ("h [command]", "show help"),
             'show': ("show [int|dev|config|app]", "show current state of specified parameter"),
             's': ("s", "start/stop communication"),
+            'r': ("r", "restart communication"),
             'com': ("com <in|out> <ComPort_number>", "change internal/device com port"),
             'p': ("p <device_name>", "change protocol"),
             'n': ("n", "enable/disable transactions with native control soft"),
@@ -375,7 +382,7 @@ class App(Notifier):
                 if (userinput.strip() == ''):
                     if self.commRunning:
                         if not self.suppressLoggers():
-                            cmd.info(self.suppressLoggers(True))
+                            cmd.info(self.suppressLoggers('FATAL'))
                         else:
                             cmd.info(self.suppressLoggers(False))
                     continue
@@ -417,13 +424,20 @@ class App(Notifier):
                     raise ApplicationError("Target device is not defined. Define with 'p <deviceName>'")
 
                 elif command == 's':
-                    # FIXME: errors when unplug moxa and instantly try to open port (or smth similar to that)
                     if self.commRunning:
                         self.stop()
                         if self.suppressLoggers():
                             cmd.info(self.suppressLoggers(False))
                     else:
                         self.start()
+
+                elif command == 'r':
+                    if self.commRunning:
+                        self.stop()
+                        if self.suppressLoggers():
+                            cmd.info(self.suppressLoggers(False))
+                        self.start()
+                    else: cmd.info("Cannot restart communication — not running currently")
 
                 elif command in ('n', 'native'):
                     self.interactWithNativeSoft = not self.interactWithNativeSoft
