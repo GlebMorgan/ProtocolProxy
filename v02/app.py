@@ -10,7 +10,7 @@ from utils import legacy, bytewise
 from device import Device, DataInvalidError
 from notifier import Notifier
 from serial_transceiver import (SerialTransceiver, PelengTransceiver,
-                                SerialError, SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
+    SerialError, SerialCommunicationError, SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
 
 log = Logger("App")
 tlog = Logger("Transactions")
@@ -84,6 +84,7 @@ class App(Notifier):
         NO_REPLY_HOPELESS = 10  # timeouts
         NATIVE_SOFT_COMM_MODE = True
 
+
     def __init__(self):
         super().__init__()
 
@@ -91,7 +92,7 @@ class App(Notifier):
         self.commThread: threading.Thread = None
         self.stopCommEvent: threading.Event = None
         self.commRunning: bool = False
-        self.LoggerLevels = {
+        self.loggerLevels = {
             'App': 'DEBUG',
             'Transactions': 'DEBUG',
             'Packets': 'DEBUG',
@@ -110,7 +111,7 @@ class App(Notifier):
         self.init()
 
     def init(self):
-        for name, level in self.LoggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
+        for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
 
@@ -195,6 +196,12 @@ class App(Notifier):
                 self.appInt.nTimeouts = 0
             if self.nativeSoftConnEstablished is False: self.nativeSoftConnEstablished = True
             return
+        finally:
+            if self.appInt.in_waiting > self.device.NATIVE_MAX_INPUT_BUFFER_SIZE:
+                nBytesUnread = self.appInt.in_waiting
+                tlog.error(f"{subject} native control soft serial input buffer ({self.appInt.port}) comes to overflow")
+                self.appInt.reset_input_buffer()
+                tlog.info(f"{self.appInt.token}: {nBytesUnread} bytes flushed.")
         tlog.info(f"Using {subject} idle payload: [{bytewise(self.device.IDLE_PAYLOAD)}]")
         self.nativeData = self.device.IDLE_PAYLOAD
 
@@ -230,85 +237,95 @@ class App(Notifier):
                 tlog.info(f"Found data from {subject} device after {self.devInt.nTimeouts} timeouts")
                 self.devInt.nTimeouts = 0
             return
+        finally:
+            if self.devInt.in_waiting > self.device.DEVICE_MAX_INPUT_BUFFER_SIZE:
+                tlog.warning(f"{subject} serial input buffer ({self.devInt.port}) comes to overflow")
+                self.devInt.reset_input_buffer()
+                tlog.info(f"{self.devInt.token}: {self.devInt.in_waiting} bytes flushed.")
 
     def commLoop(self, stopEvent):
         # TODO: introduce condition objects that will contain state of communication for native control soft and device
         #      Output transactions on demand; initially show state changes only (as well as errors/warnings)
         #      State objects are defined in app, but stored in serial objects
-        # FIXME: flush buffer if too many bytes are left in a datastream (to prevent overflow)
-        with self.appInt, self.devInt:
-            try:
-                self.commRunning = True
-                log.info("Communication launched")
-                while True:  # TODO: replace this loop with proper timing-based scheduler
-                    self.nativeData = self.deviceData = None
-                    if (stopEvent.is_set()):
-                        log.info("Received stop communication command.")
-                        break
-                    with self.device.lock:
-                        with self.controlSoftErrorsHandler():
-                            if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
-                            else: self.nativeData = self.device.IDLE_PAYLOAD
-                        if self.nativeData is None: continue
+        try:
+            with self.appInt, self.devInt:
+                try:
+                    self.commRunning = True
+                    log.info("Communication launched")
+                    while True:  # TODO: replace this loop with proper timing-based scheduler
+                        # stopEvent.wait(0.01)  # FIXME: Delete this! (temp debug code)
+                        self.nativeData = self.deviceData = None
+                        if (stopEvent.is_set()):
+                            log.info("Received stop communication command.")
+                            break
+                        with self.device.lock:
+                            with self.controlSoftErrorsHandler():
+                                if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
+                                else: self.nativeData = self.device.IDLE_PAYLOAD
+                            if self.nativeData is None: continue
 
-                        self.deviceData = self.device.wrap(self.nativeData)
-                        try:
-                            self.devInt.sendPacket(self.deviceData)
-                        except SerialWriteTimeoutError as e:
-                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                            tlog.showStackTrace(e, level='debug')
-                            continue  # TODO: what needs to be done when unexpected error happens [2]?
+                            self.deviceData = self.device.wrap(self.nativeData)
+                            try:
+                                self.devInt.sendPacket(self.deviceData)
+                            except SerialWriteTimeoutError as e:
+                                tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                                continue  # TODO: what needs to be done when unexpected error happens [2]?
 
-                        with self.deviceErrorsHandler(stopEvent):
-                            self.deviceData = self.devInt.receivePacket()
-                        if self.deviceData is None: continue
+                            with self.deviceErrorsHandler(stopEvent):
+                                self.deviceData = self.devInt.receivePacket()
+                            if self.deviceData is None: continue
 
-                        self.nativeData = self.device.unwrap(self.deviceData)
-                        try:
-                            if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.nativeData)
-                        except SerialWriteTimeoutError as e:
-                            if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
-                                if self.appInt.nTimeouts < 2:
-                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
-                            else:
-                                tlog.error(f"Failed to send data over {self.appInt.token} "
-                                           f"(native communication soft disconnected?)")
-                                tlog.showStackTrace(e, level='debug')
-                                continue  # TODO: what needs to be done when unexpected error happens [3]?
+                            self.nativeData = self.device.unwrap(self.deviceData)
+                            try:
+                                if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.nativeData)
+                            except SerialWriteTimeoutError as e:
+                                if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
+                                    if self.appInt.nTimeouts < 2:
+                                        tlog.info(f"Waiting for {self.device.name} native control soft to launch")
+                                else:
+                                    tlog.error(f"Failed to send data over {self.appInt.token} "
+                                               f"(native communication soft disconnected?)")
+                                    # TODO: what needs to be done when unexpected error happens [3]?
 
-                        # TODO: self.ui.update()
+                            # TODO: self.ui.update()
 
-            except SerialError as e:
-                tlog.fatal(f"Transaction failed: {e}")
-                tlog.showStackTrace(e, level='debug')
-                # TODO: what needs to be done when unexpected error happens [1]?
-            finally:
-                self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                self.nativeSoftConnEstablished = False
-                self.commRunning = False
-                log.info("Communication stopped")
+                except SerialError as e:
+                    tlog.fatal(f"Transaction failed: {e}")
+                    tlog.showStackTrace(e, level='debug')
+                    # TODO: what needs to be done when unexpected error happens [1]?
+                finally:
+                    self.appInt.nTimeouts = self.devInt.nTimeouts = 0
+                    self.nativeSoftConnEstablished = False
+                    self.commRunning = False
+                    log.info("Communication stopped")
+        except SerialCommunicationError as e:
+            log.fatal(f"Failed to start communication: {e}")
+            log.showStackTrace(e, level='debug')
 
     def suppressLoggers(self, mode=None):
-        isAltered = not all((Logger.LOGGERS[loggerName].level == level
-                             for loggerName, level in self.LoggerLevels.items()))
+        isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
+                             for loggerName, level in self.loggerLevels.items()))
         if mode is None:
-            # ▼ return whether loggers was suppressed (True) or they are as defined in self.LoggerLevels (False)
+            # ▼ return whether loggers was suppressed (True) or they are as defined in self.loggerLevels (False)
             return isAltered
         if mode == 'kill':  # disable all loggers completely
-            for loggerName in self.LoggerLevels:
+            for loggerName in self.loggerLevels:
                 Logger.LOGGERS[loggerName].disabled = True
-            return
+            return "————— Transactions logging output disabled —————".center(80)
         elif isAltered:  # enable all loggers back
-            for loggerName in self.LoggerLevels:
+            for loggerName in self.loggerLevels:
                 Logger.LOGGERS[loggerName].disabled = False
 
-        if mode is False or mode == 'False':  # assign levels according to self.LoggerLevels
-            for loggerName, level in self.LoggerLevels.items(): Logger.LOGGERS[loggerName].setLevel(level)
+        if mode is False or mode == 'False':  # assign levels according to self.loggerLevels
+            for loggerName, level in self.loggerLevels.items(): Logger.LOGGERS[loggerName].setLevel(level)
+            return "————— Transactions logging output restored —————".center(80)
         elif mode is True or mode == 'True':  # set transactions-related loggers to lower level
             Logger.LOGGERS["Transactions"].setLevel('WARNING')
             Logger.LOGGERS["Packets"].setLevel('ERROR')
+            return "————— Transactions logging output suppressed —————".center(80)
         elif mode in Logger.LEVELS:  # set all loggers to given level
-            for loggerName in self.LoggerLevels: Logger.LOGGERS[loggerName].setLevel(mode)
+            for loggerName in self.loggerLevels: Logger.LOGGERS[loggerName].setLevel(mode)
+            return f"————— Transactions logging output set to '{mode}' level —————".center(80)
         else:
             raise ValueError(f"Invalid logging mode '{mode}'")
 
@@ -318,7 +335,6 @@ class App(Notifier):
         Logger.LOGGERS['Packets'].setLevel(level)
 
     def runCmd(self):
-        # FIXME: suppress output to enter commands
         cmd = Logger("AppCMD", mode='noFormatting')
 
         commandsHelp = {
@@ -327,11 +343,30 @@ class App(Notifier):
             's': ("s", "start/stop communication"),
             'com': ("com <in|out> <ComPort_number>", "change internal/device com port"),
             'p': ("p <device_name>", "change protocol"),
-            'n': ("n", "enable/disable transactions with native control soft")
+            'n': ("n", "enable/disable transactions with native control soft"),
+            'so': ("so <mode>", "set transactions output suppression mode"),
+            'e': ("e", "exit app"),
         }
 
-        cmd.info(linesep * 3)
+        def showHelp(parameter=None):
+            if parameter is None:
+                commandsColumnWidth = max(len(desc[0]) for desc in commandsHelp.values())
+                lines = []
+                for desc in commandsHelp.values():
+                    lines.append(f"{desc[0].rjust(commandsColumnWidth)} — {desc[1]}")
+                lines.append(f"{'Enter (while communication)'.rjust(commandsColumnWidth)} — "
+                             f"{'switch transactions output suppression'}")
+                return linesep.join(lines)
+            else:
+                if (parameter not in commandsHelp):
+                    raise CommandError(f"No such command '{command}'")
+                return " — ".join(commandsHelp[parameter])
+
+        print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
+        print()
+        cmd.info(showHelp())
+        print()
         cmd.info(f"Available protocols: {', '.join(self.DEVICES)}")
 
         while True:
@@ -339,8 +374,10 @@ class App(Notifier):
                 userinput = input('--> ')
                 if (userinput.strip() == ''):
                     if self.commRunning:
-                        self.suppressLoggers(True)
-                        cmd.warning("————— Transactions logging output suppressed —————".center(80))
+                        if not self.suppressLoggers():
+                            cmd.info(self.suppressLoggers(True))
+                        else:
+                            cmd.info(self.suppressLoggers(False))
                     continue
                 params = userinput.strip().split()
                 command = params[0]
@@ -350,22 +387,18 @@ class App(Notifier):
                         self.stopCommEvent.set()
                         self.commThread.join()
                     cmd.error("Terminated :)")  # 'error' is just for visual standing out
-                    exit(0)
+                    import sys
+                    sys.exit(0)
 
                 elif command in ('h', 'help'):
                     if len(params) > 1:
-                        command = params[1]
-                        if (command not in commandsHelp):
-                            raise CommandError(f"No such command '{command}'")
-                        cmd.info(" — ".join(commandsHelp[command]))
+                        cmd.info(showHelp(params[1]))
                     else:
-                        commandsColumnWidth = max(len(desc[0]) for desc in commandsHelp.values())
-                        for desc in commandsHelp.values():
-                            cmd.info(f"{desc[0].rjust(commandsColumnWidth)} — {desc[1]}")
+                        cmd.info(showHelp())
 
                 elif command in ('sh', 'show'):
                     if len(params) < 2:
-                        raise CommandError("Specify what to show")
+                        raise CommandError("Specify parameter to show")
                     elem = params[1]
                     if elem in ('com', 'int', 'comm'):
                         cmd.info(f"Device interface: {self.devInt}")
@@ -384,10 +417,11 @@ class App(Notifier):
                     raise ApplicationError("Target device is not defined. Define with 'p <deviceName>'")
 
                 elif command == 's':
+                    # FIXME: errors when unplug moxa and instantly try to open port (or smth similar to that)
                     if self.commRunning:
                         self.stop()
-                        cmd.warning("————— Transactions logging output restored —————".center(80))
-                        self.suppressLoggers(False)
+                        if self.suppressLoggers():
+                            cmd.info(self.suppressLoggers(False))
                     else:
                         self.start()
 
@@ -398,7 +432,7 @@ class App(Notifier):
 
                 elif command == 'com':
                     if len(params) < 3:
-                        raise CommandError("Target com port and new port number should be specified")
+                        raise CommandError("Specify <target com port> and <new port number>")
                     if self.commRunning:
                         raise ApplicationError("Cannot change port number when communication is running")
                     direction = params[1]
@@ -417,7 +451,7 @@ class App(Notifier):
 
                 elif command == 'p':
                     if len(params) < 2:
-                        raise CommandError("New device name should be specified")
+                        raise CommandError("Specify new device name")
                     newDeviceName = params[1].lower()
                     if newDeviceName not in self.DEVICES:
                         raise CommandError(f"No such device: '{newDeviceName}'")
@@ -426,18 +460,18 @@ class App(Notifier):
                 elif command in ('so', 'supp', 'sl'):
                     if not self.commRunning:
                         raise CommandError(f"Output suppression is used only while communication is running")
-                    if len(params) > 1:
-                        suppressionMode = params[1]
-                        try:
-                            self.suppressLoggers(suppressionMode)
-                        except ValueError as e:
-                            raise ApplicationError(e)
-                    else:
-                        cmd.warning("————— Transactions logging output restored —————".center(80))
-                        self.suppressLoggers(False)
+                    if len(params) < 2:
+                        raise CommandError("Specify suppression mode")
+                    suppressionMode = params[1]
+                    try:
+                        self.suppressLoggers(suppressionMode)
+                    except ValueError as e:
+                        raise ApplicationError(e)
+
                 else: raise CommandError(f"Wrong command '{command}'")
 
             except ApplicationError as e: cmd.showError(e)
+            except SerialCommunicationError as e: cmd.showError(e)
             except Exception as e: cmd.showStackTrace(e)
 
 
