@@ -1,11 +1,10 @@
 from threading import RLock
-from typing import Union, Mapping
+from typing import Union, Mapping, TypeVar
 
 from logger import Logger
 from utils import auto_repr
 
 from notifier import Notifier
-
 
 log = Logger("Device")
 
@@ -22,25 +21,30 @@ class BadAckError(DeviceError):
     """ DSP protocol: devise has sent 'FF' acknowledge byte => error executing command on device side """
 
 
-class Par(Notifier):
-    __slots__ = 'name', 'value', 'status'
+ParType = TypeVar('ParType', str, int, float, bool)
 
-    def __init__(self, name, reqType):
+
+class Par(Notifier):
+    __slots__ = 'name', 'alias', 'value', 'status'
+
+
+    def __init__(self, name: str, alias: str, reqType: type):
         super().__init__()
 
-        self.name: str = name
-        self.value: reqType = reqType()  # ◄ value requested by app
-        self.status: Union[reqType, None] = None  # ◄ value obtained from device
+        self.name = name
+        self.alias = alias
+        self.value: ParType = reqType()  # ◄ value requested by app
+        self.status: reqType = None  # ◄ value obtained from device
 
         self.addEvent('altered')
         self.addEvent('synced')
         log.debug(f"Parameter created: {self}")
 
     @property
-    def inSync(self):
+    def inSync(self) -> bool:
         return self.value == self.status
 
-    def ack(self, obtainedValue):
+    def ack(self, obtainedValue: ParType):
         if self.inSync:
             if self.value == obtainedValue: return
             else: raise DeviceError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
@@ -67,26 +71,27 @@ class Par(Notifier):
 
 
 class Device:
+    # TODO: add Prop class that will contain state variables (like CNT_OUT) and add them to API
     DEVICE_ADDRESS: int
-    DEVICE_MAX_INPUT_BUFFER_SIZE = 255
+    DEVICE_MAX_INPUT_BUFFER_SIZE: int = 255
     NATIVE_PARITY: str
     NATIVE_BAUDRATE: int
-    NATIVE_MAX_INPUT_BUFFER_SIZE = 255
+    NATIVE_MAX_INPUT_BUFFER_SIZE: int = 255
     DEFAULT_PAYLOAD: bytes  # accepted for future redesigns — use 'IDLE_PAYLOAD' instead
     IDLE_PAYLOAD: bytes  # should not change device state when sent to device (init with default payload)
     COMMUNICATION_INTERFACE: str  # name of physical communication interface
-    API: Mapping[str, Par] = {}  # device control external API
+    API: Mapping[str, Par] = None  # device control external API
 
-    def wrap(self, *args, **kwargs):
+    def wrap(self, data: bytes) -> bytes:
         return NotImplemented
 
-    def unwrap(self, *args, **kwargs):
+    def unwrap(self, packet: bytes) -> bytes:
         return NotImplemented
 
-    def sendNative(self, *args, **kwargs):
+    def sendNative(self, transceiver, data: bytes) -> int:
         return NotImplemented
 
-    def receiveNative(self, *args, **kwargs):
+    def receiveNative(self, transceiver) -> bytes:
         return NotImplemented
 
     def ackParams(self, params: Union[dict, tuple]):
@@ -103,13 +108,13 @@ class Device:
             log.info(f"Interfaces {applicationInterface.__class__.__name__} and {deviceInterface.__class__.__name__} "
                      f"reconfigured for {self.name} protocol")
 
-    # FIXME: assign proper type hints to appCom and devCom
     def __init__(self):
         self.lock = RLock()
         self.name = self.__class__.__name__
-        # TODO: fill self.API with parameters (iterate over self)
+        self.API = {par.alias: par for par in self}  # TESTME
 
     def __iter__(self):
+        # TODO: redesign —> iterate on self.API dict
         yield from (value for value in vars(self.__class__).values() if isinstance(value, Par))
 
     def __str__(self):

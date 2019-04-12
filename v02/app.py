@@ -3,9 +3,10 @@ import threading
 from contextlib import contextmanager
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath
+from typing import Union
 
 from logger import Logger
-from utils import legacy, bytewise
+from utils import bytewise
 
 from device import Device, DataInvalidError
 from notifier import Notifier
@@ -29,7 +30,7 @@ class CommandWarning(ApplicationError):
 
 
 class ProtocolLoader(dict):
-    def __init__(self, basePath, folder: str):
+    def __init__(self, basePath: str, folder: str):
         super().__init__()
         self.protocolsPath = joinpath(basePath, folder)
         # TODO: verify path exists and valid, else ask for valid one
@@ -66,8 +67,8 @@ class ProtocolLoader(dict):
 
 
 class App(Notifier):
-    VERSION = '0.2'
-    PROJECT_FOLDER = dirname(abspath(__file__))
+    VERSION: str = '0.2'
+    PROJECT_FOLDER: str = dirname(abspath(__file__))
     DEVICES = ProtocolLoader(PROJECT_FOLDER, 'devices')
 
     log.debug(f"Launched from: {abspath(__file__)}")
@@ -75,14 +76,14 @@ class App(Notifier):
     log.info(f"Protocols directory: {joinpath(PROJECT_FOLDER, DEVICES.directory)}")
 
     class CONFIG:
-        INTERFACES = ('serial', 'ethernet')
-        DEFAULT_APP_COM_PORT = 'COM11'
-        DEFAULT_DEV_COM_PORT = 'COM1'
+        INTERFACES: tuple = ('serial', 'ethernet')
+        DEFAULT_APP_COM_PORT: str = 'COM11'
+        DEFAULT_DEV_COM_PORT: str = 'COM1'
         # TODO: make separate timeouts for device and control soft and make latter almost zero
-        SMALL_TIMEOUT_DELAY = 0.1  # sec
-        BIG_TIMEOUT_DELAY = 5  # sec
-        NO_REPLY_HOPELESS = 10  # timeouts
-        NATIVE_SOFT_COMM_MODE = True
+        SMALL_TIMEOUT_DELAY: float = 0.1  # sec
+        BIG_TIMEOUT_DELAY: int = 5        # sec
+        NO_REPLY_HOPELESS: int = 10       # timeouts
+        NATIVE_SOFT_COMM_MODE: bool = True
 
 
     def __init__(self):
@@ -104,7 +105,7 @@ class App(Notifier):
         # when communication is running, these ▼ attrs should be accessed only from inside commThread!
         self.appInt: SerialTransceiver = None  # serial interface to native communication soft (virtual port)
         self.devInt: PelengTransceiver = None  # serial interface to physical device (real port)
-        self.nativeSoftConnEstablished = False
+        self.nativeSoftConnEstablished: bool = False
         self.nativeData: bytes = None
         self.deviceData: bytes = None
 
@@ -142,7 +143,7 @@ class App(Notifier):
         self.devInt.port = self.CONFIG.DEFAULT_DEV_COM_PORT
         self.devInt.device = self.device.DEVICE_ADDRESS
 
-    def setProtocol(self, deviceName):
+    def setProtocol(self, deviceName: str):
         self.device = self.DEVICES[deviceName]()
         if not self.appInt and not self.devInt: self.initInterfaces()
         if self.devInt.INTERFACE_NAME != self.device.COMMUNICATION_INTERFACE:
@@ -273,7 +274,7 @@ class App(Notifier):
                             self.deviceData = self.device.wrap(self.nativeData)
                             try:
                                 self.devInt.sendPacket(self.deviceData)
-                            except SerialWriteTimeoutError as e:
+                            except SerialWriteTimeoutError:
                                 tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
                                 continue  # TODO: what needs to be done when unexpected error happens [2]?
 
@@ -284,7 +285,7 @@ class App(Notifier):
                             self.nativeData = self.device.unwrap(self.deviceData)
                             try:
                                 if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.nativeData)
-                            except SerialWriteTimeoutError as e:
+                            except SerialWriteTimeoutError:
                                 if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
                                     if self.appInt.nTimeouts < 2:
                                         tlog.info(f"Waiting for {self.device.name} native control soft to launch")
@@ -308,7 +309,7 @@ class App(Notifier):
             log.fatal(f"Failed to start communication: {e}")
             log.showStackTrace(e, level='debug')
 
-    def suppressLoggers(self, mode=None):
+    def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
                              for loggerName, level in self.loggerLevels.items()))
         if mode is None:
@@ -336,7 +337,7 @@ class App(Notifier):
             raise ValueError(f"Invalid logging mode '{mode}'")
 
     @staticmethod
-    def setTransactionOutputLevel(level):
+    def setTransactionOutputLevel(level: Union[str, int]):
         tlog.setLevel(level)
         Logger.LOGGERS['Packets'].setLevel(level)
 

@@ -7,7 +7,7 @@ from utils import auto_repr, bytewise
 
 import serial_transceiver
 from device import DeviceError
-from devices.sony import SONY, DataInvalidError
+from devices.sony import DataInvalidError
 from serial_transceiver import SerialError, PelengTransceiver, SerialTransceiver
 
 log = Logger("Tests")
@@ -175,6 +175,7 @@ class Test(unittest.TestCase):
                 self.received = data
                 return len(data)
 
+        from devices.sony import SONY
         d = SONY()
 
         packets = (
@@ -275,25 +276,33 @@ class Test(unittest.TestCase):
         self.assertEqual(bytes.fromhex('80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF'), tx(11))
         self.assertEqual(bytes.fromhex('80 FF'), tx(12))
         self.assertEqual(bytes.fromhex('FF'), tx(13))
+
         print()
         print("End testing SONY TX")
         print('—'*80)
+        del SONY
+
 
     def test_SONY_wrap(self):
         print("\nTest_wrap")
+
+        from devices.sony import SONY
         d = SONY()
+        d.POWER = False  # SONY parameters are class attrs :/
 
         self.assertEqual(d.CNT_IN, 0)
-        self.assertEqual(d.wrap(d.IDLE_PAYLOAD), bytes.fromhex('00 00')+d.IDLE_PAYLOAD)
+        self.assertEqual(bytes.fromhex('00 00')+d.IDLE_PAYLOAD, d.wrap(d.IDLE_PAYLOAD))
         self.assertEqual(d.CNT_IN, 0)
-        self.assertEqual(d.wrap(bytes.fromhex('88 30 01 FF')), bytes.fromhex('00 01 88 30 01 FF'))
+        self.assertEqual(bytes.fromhex('00 01 88 30 01 FF'), d.wrap(bytes.fromhex('88 30 01 FF')))
         self.assertEqual(d.CNT_IN, 1)
-        self.assertEqual(d.wrap(d.IDLE_PAYLOAD), bytes.fromhex('00 01')+d.IDLE_PAYLOAD)
+        self.assertEqual(bytes.fromhex('00 01')+d.IDLE_PAYLOAD, d.wrap(d.IDLE_PAYLOAD))
         self.assertEqual(d.CNT_IN, 1)
 
+        print()
+        print("End testing SONY wrap")
+        print('—'*80)
 
-
-
+        del SONY
 
 
 if __name__ == '__main__':

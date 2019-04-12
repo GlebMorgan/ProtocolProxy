@@ -9,27 +9,27 @@ log = Logger("SONY")
 
 
 class SONY(Device):
-    COMMUNICATION_INTERFACE = 'serial'
+    COMMUNICATION_INTERFACE: str = 'serial'
     DEVICE_ADDRESS: int = 12
     NATIVE_PARITY: str = 'N'
     NATIVE_BAUDRATE: int = 9600
     DEFAULT_PAYLOAD: bytes = b'\xFF' * 16
     IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
-    POWER = Par('POWER', bool)
-    RESET = Par('RESET', bool)
-    VIDEO_IN = Par('VIDEO_IN_EN', bool)
-    VIDEO_OUT = Par('VIDEO_OUT_EN', bool)
-    CNT_IN = 0
-    CNT_OUT = 0
+    POWER = Par('POWER', 'p', bool)
+    RESET = Par('RESET', 'r', bool)
+    VIDEO_IN = Par('VIDEO_IN_EN', 'vin', bool)
+    VIDEO_OUT = Par('VIDEO_OUT_EN', 'vout', bool)
+    CNT_IN: int = 0
+    CNT_OUT: int = 0
 
-    def wrap(self, data: bytes):
+    def wrap(self, data: bytes) -> bytes:
         if data != self.IDLE_PAYLOAD: self.CNT_IN += 1
         with self.lock:
             header = bitsarray(self.POWER, self.RESET, self.VIDEO_IN, self.VIDEO_OUT), self.CNT_IN % 0x100
             return struct.pack('< B B', *header) + data
 
-    def unwrap(self, packet):
+    def unwrap(self, packet: bytes) -> bytes:
         self.validateReply(packet)
         POWER_STATE, RESET_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE = flags(packet[0], 4)
         # ▼ access parameters via class to get a descriptor, not parameter value
@@ -40,13 +40,11 @@ class SONY(Device):
         self.__class__.CNT_OUT = packet[1]
         return packet[2:]
 
-    def sendNative(self, com, data):
+    def sendNative(self, com, data: bytes) -> int:
         if data == b'\x00' * 16: data = b'\xFF'  # ◄ SONY native control software does not accept '00's
         endIndex = data.find(b'\xFF')
-        com.write(data[:endIndex+1])
+        return com.write(data[:endIndex+1])
 
-    # NOTE: 'com' lacks type annotation only because of requirement to create dependency just 4 that...
-    # TODO: Create interface in this class for this purpose (ToGoogle: how to properly type-annotate interfaces)
     def receiveNative(self, com) -> bytes:
         inputBuffer = b''.join(self.readUpToFirstFF(com))
         if (com.in_waiting != 0):
@@ -67,7 +65,7 @@ class SONY(Device):
         raise DataInvalidError(f"Bad data from SONY control software — message size is > 16 bytes")
 
     @staticmethod
-    def validateCommandNative(packet):
+    def validateCommandNative(packet: bytes):
         assert(packet[-1] == 0xFF)
         if flag(packet[0], 7) is not True:
             raise DataInvalidError("First byte is invalid SONY message header (wrong data source is on the line?)")
@@ -75,5 +73,5 @@ class SONY(Device):
             log.warning(f"Unknown command type: {packet[1]}")
 
     @staticmethod
-    def validateReply(reply):
+    def validateReply(reply: bytes):
         if len(reply) != 18: raise DataInvalidError(f"Invalid reply packet size (expected 18, got {len(reply)}")

@@ -82,7 +82,7 @@ class SerialTransceiver(serial.Serial):
         self.nTimeouts = 0
 
     @property
-    def token(self):
+    def token(self) -> str:
         if not self.port: return self.INTERFACE_NAME.capitalize() + ': ' + 'closed'
         return self.INTERFACE_NAME.capitalize() + ': ' + self.port
 
@@ -94,7 +94,7 @@ class SerialTransceiver(serial.Serial):
             return self
         return this
 
-    def read(self, size=1):
+    def read(self, size=1) -> bytes:
         data = super().read(size)
         actualSize = len(data)
         if actualSize != size:
@@ -104,7 +104,7 @@ class SerialTransceiver(serial.Serial):
                 raise BadDataError("Incomplete data", data=data)
         return data
 
-    def readSimple(self, size=1):
+    def readSimple(self, size=1) -> bytes:
         return super().read(size)
 
     @staticmethod
@@ -119,28 +119,27 @@ class SerialTransceiver(serial.Serial):
         if ('FileNotFoundError' in error.args[0]):
             raise SerialCommunicationError(f"Cannot open port '{comPortName}' - "
                                            f"interface does not exist (device unplugged?)")
-        else: return False
 
 
 class PelengTransceiver(SerialTransceiver):
-    AUTO_LRC = False
+    AUTO_LRC: bool = False
     HEADER_LEN: int = 6  # in bytes
     STARTBYTE: int = 0x5A
     MASTER_ADR: int = 0  # should be set in reply to host machine
 
-    chch_packet_out = '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
-    chch_command = '01 01 A8 AB AF AA AC AB A3 AA 08'
-    chch_packet_in = '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
-    chch_reply = '01 01 A8 AB AF AA AC AB A3 AA 08'
+    chch_packet_out: bytes = '5A 0C 06 80 9F 73 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
+    chch_command: bytes = '01 01 A8 AB AF AA AC AB A3 AA 08'
+    chch_packet_in: bytes = '5A 00 06 80 9F 7F 01 01 A8 AB AF AA AC AB A3 AA 08 00 4E 52'
+    chch_reply: bytes = '01 01 A8 AB AF AA AC AB A3 AA 08'
 
     def __init__(self, device: int = None, master: int = MASTER_ADR, **kwargs):
         super().__init__(**kwargs)
         self.deviceAddress = device
         self.masterAddress = master
 
-        self.CHECK_RFC = True
-        self.FLUSH_UNREAD_DATA = False
-        self.ADDRESS_MISMATCH_ACTION = 'WARN&DENY'
+        self.CHECK_RFC: bool = True
+        self.FLUSH_UNREAD_DATA: bool = False
+        self.ADDRESS_MISMATCH_ACTION: str = 'WARN&DENY'
 
     class addCRC():
         """Decorator to sendPacket() method, appending LRC byte to msg"""
@@ -170,10 +169,6 @@ class PelengTransceiver(SerialTransceiver):
         If header is not contained in very first bytes of datastream, sequentially reads bytes portions of header length
         until valid header is found. Raise error otherwise.
         No extra data is grabbed from datastream after valid packet is successfully read.
-
-        :raises: SerialError, SerialReadTimeoutError, BadDataError, BadRfcError
-        :return: unwrapped high-level data
-        :rtype: bytes
         """
 
         bytesReceived = self.readSimple(self.HEADER_LEN)
@@ -263,16 +258,9 @@ class PelengTransceiver(SerialTransceiver):
         return datalen, zerobyte
 
     @addCRC(AUTO_LRC)
-    def sendPacket(self, msg):
-        """
-        Wrap msg and send packet over serial port
-        For DspAssist protocol - if AUTO_LRC is False, it is assumed that LRC byte is already appended to msg
-
-        :param msg: binary payload data
-        :type msg: bytes
-        :return: bytes written count
-        :rtype: int
-        """
+    def sendPacket(self, msg:bytes) -> int:
+        """ Wrap msg and send packet over serial port. Return number of bytes sent
+            For DspAssist protocol - if AUTO_LRC is False, it is assumed that LRC byte is already appended to msg """
 
         datalen = len(msg)  # get data size in bytes
         assert (datalen <= 0xFFF)

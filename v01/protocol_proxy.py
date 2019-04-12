@@ -23,7 +23,7 @@ log = utils.getLogger(__name__)
 
 # NOTE: For SONY protocol, do not handle CNT_IN and CNT_OUT, just pass them to UI
 
-# FIXME: Ask why CNY_IN == 0 is not accepted by SONY module of MPOS (not taking into consideration first packets)
+# NOTE: Ask why CNY_IN == 0 is not accepted by SONY module of MPOS (not taking into consideration first packets)
 
 
 class ProtocolProxy:
