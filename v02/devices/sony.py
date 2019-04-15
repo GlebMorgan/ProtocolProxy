@@ -17,11 +17,17 @@ class SONY(Device):
     DEFAULT_PAYLOAD: bytes = b'\xFF' * 16
     IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
+    # internal service attrs
+    NATIVE_PACKET_MAX_SIZE: int = 18
+    NATIVE_TERMINATOR: bytes = b'\xFF'
+
+    # master-driven parameters
     POWER = Par('POWER', 'p', bool)
     RESET = Par('RESET', 'r', bool)
     VIDEO_IN = Par('VIDEO_IN_EN', 'vin', bool)
     VIDEO_OUT = Par('VIDEO_OUT_EN', 'vout', bool)
 
+    # device-driven properties
     CNT_IN = Prop('CNT_IN', 'in', int)
     CNT_OUT = Prop('CNT_OUT', 'out', int)
 
@@ -44,8 +50,8 @@ class SONY(Device):
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
-        if data == b'\x00' * 16: data = b'\xFF'  # ◄ SONY native control software does not accept '00's
-        endIndex = data.find(b'\xFF')
+        if data == b'\x00' * 16: data = self.NATIVE_TERMINATOR  # ◄ SONY native control software does not accept '00's
+        endIndex = data.find(self.NATIVE_TERMINATOR)
         return com.write(data[:endIndex+1])
 
     def receiveNative(self, com) -> bytes:
@@ -67,16 +73,14 @@ class SONY(Device):
             if byte == b'\xFF': return
         raise DataInvalidError(f"Bad data from SONY control software — message size is > 16 bytes")
 
-    @staticmethod
-    def validateCommandNative(packet: bytes):
-        assert(packet[-1] == 0xFF)
+    def validateCommandNative(self, packet: bytes):
+        assert(packet[-1] == self.NATIVE_TERMINATOR[0])
         if flag(packet[0], 7) is not True:
             raise DataInvalidError("First byte is invalid SONY message header (wrong data source is on the line?)")
         if packet[1] not in (0x1, 0x9, 0x21, 0x22, 0x30, 0x38):
             log.warning(f"Unknown command type: {packet[1]}")
 
-    @staticmethod
-    def validateReply(reply: bytes):
-        if len(reply) > 18:
-            raise DataInvalidError(f"Invalid reply packet size (expected at most 18, got {len(reply)})",
-                                   dataname='Packet', data=reply)
+    def validateReply(self, reply: bytes):
+        if len(reply) > self.NATIVE_PACKET_MAX_SIZE:
+            raise DataInvalidError(f"Invalid reply packet size (expected at most {self.NATIVE_PACKET_MAX_SIZE}, "
+                                   f"got {len(reply)})", dataname='Packet', data=reply)

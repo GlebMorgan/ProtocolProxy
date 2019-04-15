@@ -9,6 +9,8 @@ from utils import alias, bytewise, VerboseError
 log = Logger("Serial")
 slog = Logger("Packets")
 
+# TODO: consider moving all SerialCommunication-related errors to Transceiver class (interface)
+#       and import it into devices classes to allow interface definition and raising proper error types
 
 # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ ERRORS ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ #
 
