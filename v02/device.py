@@ -2,7 +2,7 @@ from threading import RLock
 from typing import Union, Mapping, TypeVar
 
 from logger import Logger
-from utils import auto_repr
+from utils import auto_repr, VerboseError
 
 from notifier import Notifier
 
@@ -13,7 +13,7 @@ class DeviceError(RuntimeError):
     """ Firmware-level error, device returned error / wrong behaviour """
 
 
-class DataInvalidError(DeviceError):
+class DataInvalidError(VerboseError, DeviceError):
     """ Device reply contains invalid data """
 
 
@@ -22,22 +22,23 @@ class BadAckError(DeviceError):
 
 
 ParType = TypeVar('ParType', str, int, float, bool)
+PropType = TypeVar('PropType', str, int, float, bool)
 
 
 class Par(Notifier):
-    __slots__ = 'name', 'alias', 'value', 'status'
-
+    __slots__ = 'name', 'alias', 'value', 'status', 'type'
 
     def __init__(self, name: str, alias: str, reqType: type):
         super().__init__()
 
         self.name = name
         self.alias = alias
+        self.type: type = reqType
         self.value: ParType = reqType()  # ◄ value requested by app
         self.status: reqType = None  # ◄ value obtained from device
 
         self.addEvent('altered')
-        self.addEvent('synced')
+        self.addEvent('updated')
         log.debug(f"Parameter created: {self}")
 
     @property
@@ -46,12 +47,12 @@ class Par(Notifier):
 
     def ack(self, obtainedValue: ParType):
         if self.inSync:
-            if self.value == obtainedValue: return
-            else: raise DeviceError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
+            if self.value != obtainedValue:
+                raise DeviceError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
         else:
             if self.value == obtainedValue:
                 self.status = obtainedValue
-                self.notify('synced', self.name, obtainedValue)
+                self.notify('updated', self.name, obtainedValue)
 
     def __get__(self, instance, owner):
         if instance is None: return self
@@ -70,17 +71,48 @@ class Par(Notifier):
         return auto_repr(self, f"{self.name}={self.value}{'✓' if self.inSync else '↻'}")
 
 
+class Prop(Notifier):
+    __slots__ = 'name', 'alias', 'value'
+
+    def __init__(self, name: str, alias: str, reqType: type):
+        super().__init__()
+
+        self.name = name
+        self.alias = alias
+        self.value: ParType = reqType()
+
+        self.addEvent('updated')
+        log.debug(f"Property created: {self}")
+
+    def __get__(self, instance, owner):
+        if instance is None: return self
+        log.debug(f"Property demanded: {self}")
+        return self.value
+
+    def __set__(self, instance, newValue):
+        if self.value != newValue:
+            self.value = newValue
+            self.notify('updated', self.name, newValue)
+            log.debug(f"Property updated: {self}")
+
+    def __str__(self):
+        return f"{self.name}={self.value}"
+
+    def __repr__(self):
+        return auto_repr(self, f"{self.name}={self.value}")
+
+
 class Device:
-    # TODO: add Prop class that will contain state variables (like CNT_OUT) and add them to API
     DEVICE_ADDRESS: int
     DEVICE_MAX_INPUT_BUFFER_SIZE: int = 255
-    NATIVE_PARITY: str
+    NATIVE_TIMEOUT: float
     NATIVE_BAUDRATE: int
+    NATIVE_PARITY: str
     NATIVE_MAX_INPUT_BUFFER_SIZE: int = 255
     DEFAULT_PAYLOAD: bytes  # accepted for future redesigns — use 'IDLE_PAYLOAD' instead
     IDLE_PAYLOAD: bytes  # should not change device state when sent to device (init with default payload)
     COMMUNICATION_INTERFACE: str  # name of physical communication interface
-    API: Mapping[str, Par] = None  # device control external API
+    API: Mapping[str, Union[Par, Prop]] = None  # device control external API
 
     def wrap(self, data: bytes) -> bytes:
         return NotImplemented
@@ -94,7 +126,10 @@ class Device:
     def receiveNative(self, transceiver) -> bytes:
         return NotImplemented
 
-    def ackParams(self, params: Union[dict, tuple]):
+    def getPar(self, parName):  # NOTE: not tested
+        return getattr(self.__class__, parName)
+
+    def ackParams(self, params: Union[dict, tuple]):  # NOTE: not tested
         """ 'params' must be a 'parameter_name : device_obtained_value' mapping """
         if isinstance(params, Mapping):
             for parName, checkValue in params:
@@ -103,22 +138,24 @@ class Device:
     def configureInterface(self, applicationInterface, deviceInterface):
         if (self.COMMUNICATION_INTERFACE == 'serial'):
             deviceInterface.deviceAddress = self.DEVICE_ADDRESS
-            applicationInterface.parity = self.NATIVE_PARITY
+            applicationInterface.timeout = self.NATIVE_TIMEOUT
             applicationInterface.baudrate = self.NATIVE_BAUDRATE
+            applicationInterface.parity = self.NATIVE_PARITY
             log.info(f"Interfaces {applicationInterface.__class__.__name__} and {deviceInterface.__class__.__name__} "
                      f"reconfigured for {self.name} protocol")
 
     def __init__(self):
         self.lock = RLock()
         self.name = self.__class__.__name__
-        self.API = {par.alias: par for par in self}  # TESTME
+        self.params = tuple(slot for slot in vars(self.__class__).values() if isinstance(slot, Par))
+        self.API = {slot.alias: slot for slot in vars(self.__class__).values() if isinstance(slot, (Par, Prop))}
 
     def __iter__(self):
-        # TODO: redesign —> iterate on self.API dict
-        yield from (value for value in vars(self.__class__).values() if isinstance(value, Par))
+        yield from self.API.values()
 
     def __str__(self):
-        return f"{self.__class__.__name__}({', '.join((str(par) for par in self))})"
+        return f"{self.__class__.__name__}{'✓' if all(par.inSync for par in self.params) else '↺'} " \
+            f"({', '.join((str(slot) for slot in self))})"
 
     def __repr__(self):
-        return auto_repr(self, ', '.join((str(par) for par in self)))
+        return auto_repr(self, ', '.join((str(slot) for slot in self)))

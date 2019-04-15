@@ -4,8 +4,7 @@ from functools import wraps
 import serial
 from checksums import rfc1071
 from logger import Logger
-from utils import alias, bytewise
-
+from utils import alias, bytewise, VerboseError
 
 log = Logger("Serial")
 slog = Logger("Packets")
@@ -28,16 +27,9 @@ class AddressMismatchError(SerialError):
     """ Address defined in header does not match with host address """
 
 
-class SerialCommunicationError(SerialError):
+class SerialCommunicationError(SerialError, VerboseError):
     """ Communication-level error, indicate failure in packet transmission process """
     __slots__ = ()
-
-    def __init__(self, *args, data=None, dataname=None):
-        if (data is not None):
-            if (dataname is None): self.dataname = "Bytes"
-            else: self.dataname = dataname
-            self.data = data
-        super().__init__(*args)
 
 
 class BadDataError(SerialCommunicationError):

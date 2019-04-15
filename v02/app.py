@@ -2,7 +2,7 @@ import importlib
 import threading
 from contextlib import contextmanager
 from os import listdir, linesep
-from os.path import abspath, dirname, isfile, join as joinpath
+from os.path import abspath, dirname, isfile, join as joinpath, isdir
 from typing import Union
 
 from logger import Logger
@@ -10,8 +10,8 @@ from utils import bytewise
 
 from device import Device, DataInvalidError
 from notifier import Notifier
-from serial_transceiver import (SerialTransceiver, PelengTransceiver,
-    SerialError, SerialCommunicationError, SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
+from serial_transceiver import (SerialTransceiver, PelengTransceiver, SerialError, SerialCommunicationError,
+                                SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
 
 log = Logger("App")
 tlog = Logger("Transactions")
@@ -33,7 +33,9 @@ class ProtocolLoader(dict):
     def __init__(self, basePath: str, folder: str):
         super().__init__()
         self.protocolsPath = joinpath(basePath, folder)
-        # TODO: verify path exists and valid, else ask for valid one
+        if not isdir(self.protocolsPath):
+            # TODO: catch this error in ui and ask for valid protocols path
+            raise ApplicationError("Protocols directory path is invalid")
         self.directory = folder
         for filename in listdir(self.protocolsPath):
             if (filename.endswith('.py') and isfile(joinpath(self.protocolsPath, filename))):
@@ -79,12 +81,11 @@ class App(Notifier):
         INTERFACES: tuple = ('serial', 'ethernet')
         DEFAULT_APP_COM_PORT: str = 'COM11'
         DEFAULT_DEV_COM_PORT: str = 'COM1'
-        # TODO: make separate timeouts for device and control soft and make latter almost zero
-        SMALL_TIMEOUT_DELAY: float = 0.1  # sec
-        BIG_TIMEOUT_DELAY: int = 5        # sec
-        NO_REPLY_HOPELESS: int = 10       # timeouts
+        DEVICE_TIMEOUT: float = 0.5  # sec
+        SMALL_TIMEOUT_DELAY: float = 0.5  # sec
+        BIG_TIMEOUT_DELAY: int = 5  # sec
+        NO_REPLY_HOPELESS: int = 50  # timeouts
         NATIVE_SOFT_COMM_MODE: bool = True
-
 
     def __init__(self):
         super().__init__()
@@ -125,12 +126,11 @@ class App(Notifier):
             yield
             self.start()
 
-    @staticmethod
-    def getInterface(intType):
+    def getInterface(self, intType: str):
         if intType.lower() == 'virtual serial':
             return SerialTransceiver()
         elif intType.lower() == 'serial':
-            return PelengTransceiver()
+            return PelengTransceiver(timeout=self.CONFIG.DEVICE_TIMEOUT)
         elif intType.lower() == 'ethernet':
             log.error(f"Interface {intType} is not supported currently")
             return NotImplemented
@@ -207,7 +207,7 @@ class App(Notifier):
         finally:
             if self.appInt.in_waiting > self.device.NATIVE_MAX_INPUT_BUFFER_SIZE:
                 nBytesUnread = self.appInt.in_waiting
-                tlog.error(f"{subject} native control soft serial input buffer ({self.appInt.port}) comes to overflow")
+                tlog.error(f"{subject} native control soft input buffer ({self.appInt.port}) is filled over limit")
                 self.appInt.reset_input_buffer()
                 tlog.info(f"{self.appInt.token}: {nBytesUnread} bytes flushed.")
         tlog.info(f"Using {subject} idle payload: [{bytewise(self.device.IDLE_PAYLOAD)}]")
@@ -296,7 +296,7 @@ class App(Notifier):
 
                             # TODO: self.ui.update()
 
-                except SerialError as e:
+                except (SerialError, DataInvalidError) as e:
                     tlog.fatal(f"Transaction failed: {e}")
                     tlog.showStackTrace(e, level='debug')
                     # TODO: what needs to be done when unexpected error happens [1]?
@@ -352,8 +352,9 @@ class App(Notifier):
             'com': ("com <in|out> <ComPort_number>", "change internal/device com port"),
             'p': ("p <device_name>", "change protocol"),
             'n': ("n", "enable/disable transactions with native control soft"),
-            'so': ("so <mode>", "set transactions output suppression mode"),
+            'so': ("so <mode>", "set transactions output suppression"),
             'e': ("e", "exit app"),
+            'd': ("d <parameter_shortcut> [new_value]", "show/set device parameter")
         }
 
         def showHelp(parameter=None):
@@ -369,6 +370,30 @@ class App(Notifier):
                 if (parameter not in commandsHelp):
                     raise CommandError(f"No such command '{command}'")
                 return " — ".join(commandsHelp[parameter])
+
+        def castInput(targetType: type, value: str) -> Union[None, str, int, float, bool]:
+            value = value.lower()
+
+            if targetType is str:
+                return value
+
+            if targetType is bool:
+                if value in ('true', 'yes', '1', 'on'): return True
+                elif value in ('false', 'no', '0', 'off'): return False
+
+            elif targetType is int:
+                try:
+                    if (value[:2] == '0x'): return int(value, 16)
+                    elif (value[:2] == '0b'): return int(value, 2)
+                    else: return int(value)
+                except ValueError: pass  # Value error will be raised at the end of function
+
+            elif targetType is float:
+                try:
+                    return float(value)
+                except ValueError: pass  # Again, value error will be raised below
+
+            raise ValueError(f"Cannot convert '{value}' to {targetType}")
 
         print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
@@ -399,10 +424,10 @@ class App(Notifier):
                     sys.exit(0)
 
                 elif command in ('h', 'help'):
-                    if len(params) > 1:
-                        cmd.info(showHelp(params[1]))
-                    else:
+                    if len(params) == 1:
                         cmd.info(showHelp())
+                    else:
+                        cmd.info(showHelp(params[1]))
 
                 elif command in ('sh', 'show'):
                     if len(params) < 2:
@@ -413,6 +438,8 @@ class App(Notifier):
                         cmd.info(f"Control soft interface: {self.appInt}")
                     elif elem in ('d', 'dev', 'device', 'p', 'protocol'):
                         cmd.info(self.device)
+                    elif elem in ('par', 'params'):
+                        cmd.info(self.device.params)
                     elif elem in ('conf', 'config'):
                         for par in self.CONFIG.__dict__:
                             if par == par.strip('__'):
@@ -422,7 +449,7 @@ class App(Notifier):
                     else: raise CommandError(f"No such parameter '{elem}'")
 
                 elif not self.device and command != 'p':
-                    raise ApplicationError("Target device is not defined. Define with 'p <deviceName>'")
+                    raise CommandError("Target device is not defined. Define with 'p <deviceName>'")
 
                 elif command == 's':
                     if self.commRunning:
@@ -471,6 +498,28 @@ class App(Notifier):
                     if newDeviceName not in self.DEVICES:
                         raise CommandError(f"No such device: '{newDeviceName}'")
                     self.setProtocol(newDeviceName)
+
+                elif command == 'd':
+                    if len(params) == 1:
+                        cmd.info(NotImplemented)
+                    else:
+                        parAlias = params[1]
+                        if (parAlias not in self.device.API):
+                            raise CommandError(f"{self.device.name} has no parameter with shortcut '{parAlias}'")
+                        par = self.device.API[parAlias]
+                        if len(params) == 2:
+                            # ▼ show parameter value
+                            cmd.info(par)
+                        else:
+                            # ▼ set parameter value
+                            newValue = params[2]
+                            if par not in self.device.params:
+                                raise CommandError(f"{self.device.name}.{par.name} is a property "
+                                                   f"and cannot be changed externally")
+                            try: par.__set__(self.device, castInput(par.type, newValue))
+                            except ValueError as e: raise CommandError(e)
+                            cmd.info(par)
+
 
                 elif command in ('so', 'supp', 'sl'):
                     if not self.commRunning:

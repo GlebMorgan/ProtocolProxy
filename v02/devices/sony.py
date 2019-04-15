@@ -3,7 +3,7 @@ import struct
 from bits import bitsarray, flags, flag
 from logger import Logger
 
-from device import Device, Par, DataInvalidError
+from device import Device, Par, Prop, DataInvalidError
 
 log = Logger("SONY")
 
@@ -11,6 +11,7 @@ log = Logger("SONY")
 class SONY(Device):
     COMMUNICATION_INTERFACE: str = 'serial'
     DEVICE_ADDRESS: int = 12
+    NATIVE_TIMEOUT: float = 0.2
     NATIVE_PARITY: str = 'N'
     NATIVE_BAUDRATE: int = 9600
     DEFAULT_PAYLOAD: bytes = b'\xFF' * 16
@@ -20,8 +21,9 @@ class SONY(Device):
     RESET = Par('RESET', 'r', bool)
     VIDEO_IN = Par('VIDEO_IN_EN', 'vin', bool)
     VIDEO_OUT = Par('VIDEO_OUT_EN', 'vout', bool)
-    CNT_IN: int = 0
-    CNT_OUT: int = 0
+
+    CNT_IN = Prop('CNT_IN', 'in', int)
+    CNT_OUT = Prop('CNT_OUT', 'out', int)
 
     def wrap(self, data: bytes) -> bytes:
         if data != self.IDLE_PAYLOAD: self.CNT_IN += 1
@@ -31,13 +33,14 @@ class SONY(Device):
 
     def unwrap(self, packet: bytes) -> bytes:
         self.validateReply(packet)
+        cls = self.__class__
         POWER_STATE, RESET_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE = flags(packet[0], 4)
         # ▼ access parameters via class to get a descriptor, not parameter value
-        self.__class__.POWER.ack(POWER_STATE)
-        self.__class__.RESET.ack(RESET_STATE)
-        self.__class__.VIDEO_IN.ack(VIDEO_IN_STATE)
-        self.__class__.VIDEO_OUT.ack(VIDEO_OUT_STATE)
-        self.__class__.CNT_OUT = packet[1]
+        cls.POWER.ack(POWER_STATE)
+        cls.RESET.ack(RESET_STATE)
+        cls.VIDEO_IN.ack(VIDEO_IN_STATE)
+        cls.VIDEO_OUT.ack(VIDEO_OUT_STATE)
+        cls.CNT_OUT = packet[1]
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
@@ -74,4 +77,6 @@ class SONY(Device):
 
     @staticmethod
     def validateReply(reply: bytes):
-        if len(reply) != 18: raise DataInvalidError(f"Invalid reply packet size (expected 18, got {len(reply)}")
+        if len(reply) > 18:
+            raise DataInvalidError(f"Invalid reply packet size (expected at most 18, got {len(reply)})",
+                                   dataname='Packet', data=reply)
