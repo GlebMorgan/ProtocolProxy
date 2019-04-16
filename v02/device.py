@@ -155,7 +155,7 @@ class Device:
 
     def __str__(self):
         return f"{self.__class__.__name__}{'✓' if all(par.inSync for par in self.params) else '↺'} " \
-            f"({', '.join((str(slot) for slot in self))})"
+               f"({', '.join((str(slot) for slot in self))})"
 
     def __repr__(self):
-        return auto_repr(self, ', '.join((str(slot) for slot in self)))
+        return auto_repr(self, '✓' if all(par.inSync for par in self.params) else '↺')

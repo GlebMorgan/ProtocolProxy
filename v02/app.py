@@ -1,6 +1,7 @@
 import importlib
 import threading
 from contextlib import contextmanager
+from itertools import chain
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath, isdir
 from typing import Union
@@ -395,6 +396,11 @@ class App(Notifier):
 
             raise ValueError(f"Cannot convert '{value}' to {targetType}")
 
+        def formatDict(d: dict, spaces=4):
+            lines = (f"{' ' * spaces}'{name}' = {str(value)}" if value is not d else '<this mapping>'
+                     for name, value in d.items())
+            return linesep.join(chain('{', lines, '}'))
+
         print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
         print()
@@ -437,7 +443,17 @@ class App(Notifier):
                         cmd.info(f"Device interface: {self.devInt}")
                         cmd.info(f"Control soft interface: {self.appInt}")
                     elif elem in ('d', 'dev', 'device', 'p', 'protocol'):
-                        cmd.info(self.device)
+                        if not self.device: cmd.info("Device is not selected")
+                        else:
+                            baseClass = self.device.__class__.__bases__[0]
+                            for attrName in baseClass.__annotations__:
+                                if attrName.isupper() and hasattr(self.device, attrName):
+                                    attr = getattr(self.device, attrName)
+                                    if (isinstance(attr, bytes)):
+                                        attr = f'[{bytewise(attr)}]'
+                                    elif (isinstance(attr, dict)):
+                                        attr = formatDict(attr)
+                                    cmd.info(f"{self.device.name}.{attrName} = {attr}")
                     elif elem in ('par', 'params'):
                         cmd.info(self.device.params)
                     elif elem in ('conf', 'config'):
@@ -501,7 +517,7 @@ class App(Notifier):
 
                 elif command == 'd':
                     if len(params) == 1:
-                        cmd.info(NotImplemented)
+                        cmd.info(self.device)
                     else:
                         parAlias = params[1]
                         if (parAlias not in self.device.API):
@@ -509,7 +525,7 @@ class App(Notifier):
                         par = self.device.API[parAlias]
                         if len(params) == 2:
                             # ▼ show parameter value
-                            cmd.info(par)
+                            cmd.info(f"{self.device.name}.{par}")
                         else:
                             # ▼ set parameter value
                             newValue = params[2]
@@ -518,7 +534,7 @@ class App(Notifier):
                                                    f"and cannot be changed externally")
                             try: par.__set__(self.device, castInput(par.type, newValue))
                             except ValueError as e: raise CommandError(e)
-                            cmd.info(par)
+                            cmd.info(f"{self.device.name}.{par}")
 
 
                 elif command in ('so', 'supp', 'sl'):
