@@ -7,7 +7,7 @@ from os.path import abspath, dirname, isfile, join as joinpath, isdir
 from typing import Union
 
 from logger import Logger
-from utils import bytewise
+from utils import bytewise, castStr
 
 from device import Device, DataInvalidError
 from notifier import Notifier
@@ -20,14 +20,17 @@ tlog = Logger("Transactions")
 
 class ApplicationError(RuntimeError):
     """ ProtocolProxy application-level error """
+    __slots__ = ()
 
 
 class CommandError(ApplicationError):
     """ Invalid command signature / parameters / semantics """
+    __slots__ = ()
 
 
 class CommandWarning(ApplicationError):
     """ Abnormal things happened while processing the command """
+    __slots__ = ()
 
 
 class ProtocolLoader(dict):
@@ -72,11 +75,8 @@ class ProtocolLoader(dict):
 class App(Notifier):
     VERSION: str = '0.2'
     PROJECT_FOLDER: str = dirname(abspath(__file__))
-    DEVICES = ProtocolLoader(PROJECT_FOLDER, 'devices')
-
-    log.debug(f"Launched from: {abspath(__file__)}")
-    log.info(f"Project directory: {PROJECT_FOLDER}")
-    log.info(f"Protocols directory: {joinpath(PROJECT_FOLDER, DEVICES.directory)}")
+    DEVICES_FOLDER_REL = 'devices'
+    DEVICES = None
 
     class CONFIG:
         INTERFACES: tuple = ('serial', 'ethernet')
@@ -111,9 +111,16 @@ class App(Notifier):
         self.nativeData: bytes = None
         self.deviceData: bytes = None
 
+        #
         self.init()
 
     def init(self):
+        self.DEVICES = ProtocolLoader(self.PROJECT_FOLDER, self.DEVICES_FOLDER_REL)
+
+        log.debug(f"Launched from: {abspath(__file__)}")
+        log.info(f"Project directory: {self.PROJECT_FOLDER}")
+        log.info(f"Protocols directory: {joinpath(self.PROJECT_FOLDER, self.DEVICES.directory)}")
+
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
@@ -347,19 +354,21 @@ class App(Notifier):
 
         commandsHelp = {
             'h': ("h [command]", "show help"),
-            'show': ("show [int|dev|config|app]", "show current state of specified parameter"),
+            'show': ("show [int|dev|config|app|log]", "show current state of specified parameter"),
             's': ("s", "start/stop communication"),
             'r': ("r", "restart communication"),
-            'com': ("com <in|out> <ComPort_number>", "change internal/device com port"),
+            'com': ("com [<in|out> <new_COM_port_number>]", "change internal/device com port"),
             'p': ("p <device_name>", "change protocol"),
             'n': ("n", "enable/disable transactions with native control soft"),
             'so': ("so <mode>", "set transactions output suppression"),
             'e': ("e", "exit app"),
-            'd': ("d <parameter_shortcut> [new_value]", "show/set device parameter")
+            'd': ("d <parameter_shortcut> [new_value]", "show/set device parameter"),
+            'log': ("log [<logger_name>, <new_level>]", "set logging level to specified logger"),
         }
 
         def showHelp(parameter=None):
-            if parameter is None:
+            if parameter == '': return ''
+            elif parameter is None:
                 commandsColumnWidth = max(len(desc[0]) for desc in commandsHelp.values())
                 lines = []
                 for desc in commandsHelp.values():
@@ -372,34 +381,17 @@ class App(Notifier):
                     raise CommandError(f"No such command '{command}'")
                 return " — ".join(commandsHelp[parameter])
 
-        def castInput(targetType: type, value: str) -> Union[None, str, int, float, bool]:
-            value = value.lower()
-
-            if targetType is str:
-                return value
-
-            if targetType is bool:
-                if value in ('true', 'yes', '1', 'on'): return True
-                elif value in ('false', 'no', '0', 'off'): return False
-
-            elif targetType is int:
-                try:
-                    if (value[:2] == '0x'): return int(value, 16)
-                    elif (value[:2] == '0b'): return int(value, 2)
-                    else: return int(value)
-                except ValueError: pass  # Value error will be raised at the end of function
-
-            elif targetType is float:
-                try:
-                    return float(value)
-                except ValueError: pass  # Again, value error will be raised below
-
-            raise ValueError(f"Cannot convert '{value}' to {targetType}")
-
         def formatDict(d: dict, spaces=4):
             lines = (f"{' ' * spaces}'{name}' = {str(value)}" if value is not d else '<this mapping>'
                      for name, value in d.items())
             return linesep.join(chain('{', lines, '}'))
+
+        def formatSerialTransceiver(com: SerialTransceiver):
+            return (f"{com.__class__.__name__} ({'opened' if com.is_open else 'closed'}): "
+                    f"'{com.port}', {com.baudrate}, {com.bytesize}-{com.parity}-{com.stopbits}")
+
+        def test(*args):
+            cmd.debug('Test function output. Args: ' + ', '.join(args))
 
         print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
@@ -408,6 +400,7 @@ class App(Notifier):
         print()
         cmd.info(f"Available protocols: {', '.join(self.DEVICES)}")
 
+        command = ''
         while True:
             try:
                 userinput = input('--> ')
@@ -435,11 +428,14 @@ class App(Notifier):
                     else:
                         cmd.info(showHelp(params[1]))
 
+                elif command in ('t', 'test'):
+                    test(*params[1:])
+
                 elif command in ('sh', 'show'):
                     if len(params) < 2:
                         raise CommandError("Specify parameter to show")
                     elem = params[1]
-                    if elem in ('com', 'int', 'comm'):
+                    if elem in ('i', 'int', 'c', 'com', 'comm'):
                         cmd.info(f"Device interface: {self.devInt}")
                         cmd.info(f"Control soft interface: {self.appInt}")
                     elif elem in ('d', 'dev', 'device', 'p', 'protocol'):
@@ -462,7 +458,25 @@ class App(Notifier):
                                 cmd.info(f"{par} = {getattr(self.CONFIG, par)}")
                     elif elem in ('this', 'self', 'app', 'state'):
                         cmd.info(NotImplemented)
+                    elif elem in ('l', 'log'):
+                        cmd.info(', '.join(f"{logName} = {level}" for logName, level in self.loggerLevels.items()))
                     else: raise CommandError(f"No such parameter '{elem}'")
+
+                elif command in ('l', 'log'):
+                    if len(params) == 1:
+                        cmd.info(', '.join(f"{logName} = {level}" for logName, level in self.loggerLevels.items()))
+                    elif len(params) == 3:
+                        loggerName = params[1].capitalize()
+                        if (loggerName not in self.loggerLevels):
+                            raise CommandError("Invalid logger name. List available loggers via 'sh log'")
+                        newLevelName = params[2].upper()
+                        if (newLevelName in Logger.LEVELS_SHORT):
+                            newLevelName = Logger.LEVELS_SHORT[newLevelName]
+                        elif (newLevelName not in Logger.LEVELS):
+                            raise CommandError('Invalid logging level')
+                        self.loggerLevels[loggerName] = newLevelName
+                        Logger.LOGGERS[loggerName].setLevel(newLevelName)
+                    else: raise CommandError(f"Wrong parameters")
 
                 elif not self.device and command != 'p':
                     raise CommandError("Target device is not defined. Define with 'p <deviceName>'")
@@ -489,23 +503,26 @@ class App(Notifier):
                              f"interaction with {self.device.name} native control soft")
 
                 elif command == 'com':
-                    if len(params) < 3:
-                        raise CommandError("Specify <target com port> and <new port number>")
-                    if self.commRunning:
-                        raise ApplicationError("Cannot change port number when communication is running")
-                    direction = params[1]
-                    newPortNumber = params[2].strip('0')
-                    if direction.lower() not in ('in', 'out'):
-                        raise CommandError("Com port specification is invalid. Expected [in|out]")
-                    if not newPortNumber.isdecimal():
-                        raise CommandError("New port number is invalid. Integer expected")
-                    if len(newPortNumber) > 2:
-                        raise CommandError("That's definitely invalid port number!")
-                    if newPortNumber in (intf.port.upper().strip('COM') for intf in (self.devInt, self.appInt)):
-                        raise ApplicationError(f"Port number {newPortNumber} is already assigned to serial interface")
-                    interface = self.appInt if direction == 'in' else self.devInt
-                    interface.port = 'COM' + newPortNumber
-                    cmd.info(f"'{direction.capitalize()}' COM port changed to {interface.port}")
+                    if len(params) == 1:
+                        cmd.info(f"Device interface: {formatSerialTransceiver(self.devInt)}")
+                        cmd.info(f"Control soft interface: {formatSerialTransceiver(self.appInt)}")
+                    elif len(params) == 3:
+                        if self.commRunning:
+                            raise ApplicationError("Cannot change port number when communication is running")
+                        direction = params[1]
+                        newPortNum = params[2].strip('0')
+                        if direction.lower() not in ('in', 'out'):
+                            raise CommandError("Com port specification is invalid. Expected [in|out]")
+                        if not newPortNum.isdecimal():
+                            raise CommandError("New port number is invalid. Integer expected")
+                        if len(newPortNum) > 2:
+                            raise CommandError("That's definitely invalid port number!")
+                        if newPortNum in (intf.port.upper().strip('COM') for intf in (self.devInt, self.appInt)):
+                            raise ApplicationError(f"Port number {newPortNum} is already assigned to serial interface")
+                        interface = self.appInt if direction == 'in' else self.devInt
+                        interface.port = 'COM' + newPortNum
+                        cmd.info(f"'{direction.capitalize()}' COM port changed to {interface.port}")
+                    else: raise CommandError("Wrong parameters", event='params')
 
                 elif command == 'p':
                     if len(params) < 2:
@@ -532,10 +549,9 @@ class App(Notifier):
                             if par not in self.device.params:
                                 raise CommandError(f"{self.device.name}.{par.name} is a property "
                                                    f"and cannot be changed externally")
-                            try: par.__set__(self.device, castInput(par.type, newValue))
+                            try: par.__set__(self.device, castStr(par.type, newValue))
                             except ValueError as e: raise CommandError(e)
                             cmd.info(f"{self.device.name}.{par}")
-
 
                 elif command in ('so', 'supp', 'sl'):
                     if not self.commRunning:
@@ -550,6 +566,7 @@ class App(Notifier):
 
                 else: raise CommandError(f"Wrong command '{command}'")
 
+            except CommandError as e: cmd.showError(e)
             except ApplicationError as e: cmd.showError(e)
             except SerialCommunicationError as e: cmd.showError(e)
             except Exception as e: cmd.showStackTrace(e)

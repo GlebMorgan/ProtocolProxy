@@ -29,9 +29,8 @@ class AddressMismatchError(SerialError):
     """ Address defined in header does not match with host address """
 
 
-class SerialCommunicationError(SerialError, VerboseError):
+class SerialCommunicationError(VerboseError, SerialError):
     """ Communication-level error, indicate failure in packet transmission process """
-    __slots__ = ()
 
 
 class BadDataError(SerialCommunicationError):

@@ -236,14 +236,11 @@ class Test(unittest.TestCase):
             '00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 3
             '01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 4
             '01 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 5
-            '01 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 6
-            '01 FF',  # 7
-            'FF',  # 8
-            '',  # 9
-            'FF '*40,  # 10
-            '01 00 80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF',  # 11
-            '01 00 80 FF DD 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 12
-            '01 00 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF',  # 13
+            '',  # 6
+            'FF '*40,  # 7
+            '01 00 80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF',  # 8
+            '01 00 80 FF DD 00 00 00 00 00 00 00 00 00 00 00 00 00',  # 9
+            '01 00 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF',  # 10
         )
 
         def tx(i):
@@ -270,12 +267,9 @@ class Test(unittest.TestCase):
         with self.assertRaises(DataInvalidError): tx(5)
         with self.assertRaises(DataInvalidError): tx(6)
         with self.assertRaises(DataInvalidError): tx(7)
-        with self.assertRaises(DataInvalidError): tx(8)
-        with self.assertRaises(DataInvalidError): tx(9)
-        with self.assertRaises(DataInvalidError): tx(10)
-        self.assertEqual(bytes.fromhex('80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF'), tx(11))
-        self.assertEqual(bytes.fromhex('80 FF'), tx(12))
-        self.assertEqual(bytes.fromhex('FF'), tx(13))
+        self.assertEqual(bytes.fromhex('80 99 DD AA BB EE CC 33 11 22 88 44 66 11 55 FF'), tx(8))
+        self.assertEqual(bytes.fromhex('80 FF'), tx(9))
+        self.assertEqual(bytes.fromhex('FF'), tx(10))
 
         print()
         print("End testing SONY TX")

@@ -84,3 +84,5 @@ class SONY(Device):
         if len(reply) > self.NATIVE_PACKET_MAX_SIZE:
             raise DataInvalidError(f"Invalid reply packet size (expected at most {self.NATIVE_PACKET_MAX_SIZE}, "
                                    f"got {len(reply)})", dataname='Packet', data=reply)
+        if (len(reply) < 3): raise DataInvalidError("Invalid reply packet size (expected at least 3, "
+                                                    f"got {len(reply)}", dataname='Packet', data=reply)
