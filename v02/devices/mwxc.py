@@ -56,9 +56,9 @@ class MWXC(Device):
     def receiveNative(self, com) -> bytes:
         startByte = com.read(1)
         if (startByte != self.NATIVE_STARTBYTE_COMMAND):
-            log.warning(f"Bad data in front of the stream: {startByte:02X}. Searching for valid startbyte...")
+            log.warning(f"Bad data in front of the stream: {bytewise(startByte)}. Searching for valid startbyte...")
             for i in range(1, self.NATIVE_PACKET_SIZE):
-                startByte = com.simpleRead(1)
+                startByte = com.readSimple(1)
                 if (not startByte):
                     raise BadDataError("No startbyte")
                 if (startByte == self.NATIVE_STARTBYTE_COMMAND):
@@ -66,7 +66,7 @@ class MWXC(Device):
                     break
             else: raise SerialCommunicationError("Cannot find header in datastream, too many attempts...")
 
-        nativePacket = startByte + com.simpleRead(self.NATIVE_PACKET_SIZE - 1)
+        nativePacket = startByte + com.readSimple(self.NATIVE_PACKET_SIZE - 1)
         if len(nativePacket) != self.NATIVE_PACKET_SIZE:
             raise BadDataError(f"Bad packet (data too small, [{len(nativePacket)}] out of [{self.NATIVE_PACKET_SIZE}])",
                                dataname="Packet", data=nativePacket)
@@ -79,7 +79,7 @@ class MWXC(Device):
         return nativePacket[1:-2]
 
     def validateCommandNative(self, packet: bytes):
-        return True
+        return True  # TODO: MWXC.validateCommandNative
 
     def validateReply(self, reply: bytes):
-        return True
+        return True  # TODO: MWXC.validateReply

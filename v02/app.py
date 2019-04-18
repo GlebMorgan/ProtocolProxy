@@ -18,6 +18,8 @@ log = Logger("App")
 tlog = Logger("Transactions")
 
 
+# FIXME: s —> n —> n —> outputs: Failed to send data over Serial: COM11 (native communication soft disconnected?) - why?
+
 class ApplicationError(RuntimeError):
     """ ProtocolProxy application-level error """
     __slots__ = ()
@@ -180,7 +182,6 @@ class App(Notifier):
         self.stopCommEvent.set()
         self.commThread.join()
         self.stopCommEvent.clear()
-        self.commThread = None
 
     @contextmanager
     def controlSoftErrorsHandler(self):
@@ -267,6 +268,7 @@ class App(Notifier):
             with self.appInt, self.devInt:
                 try:
                     self.commRunning = True
+                    self.nativeSoftConnEstablished = False
                     log.info("Communication launched")
                     while True:  # TODO: replace this loop with proper timing-based scheduler
                         self.nativeData = self.deviceData = None
@@ -310,12 +312,13 @@ class App(Notifier):
                     # TODO: what needs to be done when unexpected error happens [1]?
                 finally:
                     self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                    self.nativeSoftConnEstablished = False
                     self.commRunning = False
                     log.info("Communication stopped")
         except SerialCommunicationError as e:
             log.fatal(f"Failed to start communication: {e}")
             log.showStackTrace(e, level='debug')
+        finally:
+            self.commThread = None
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
@@ -403,7 +406,8 @@ class App(Notifier):
         command = ''
         while True:
             try:
-                userinput = input('--> ')
+                prompt = '↻► ' if self.commRunning else '—► '
+                userinput = input(prompt)
                 if (userinput.strip() == ''):
                     if self.commRunning:
                         if not self.suppressLoggers():
