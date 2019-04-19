@@ -281,9 +281,9 @@ class App(Notifier):
                                 else: self.nativeData = self.device.IDLE_PAYLOAD
                             if self.nativeData is None: continue
 
-                            self.deviceData = self.device.wrap(self.nativeData)
+                            self.nativeData = self.device.wrap(self.nativeData)
                             try:
-                                self.devInt.sendPacket(self.deviceData)
+                                self.devInt.sendPacket(self.nativeData)
                             except SerialWriteTimeoutError:
                                 tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
                                 continue  # TODO: what needs to be done when unexpected error happens [2]?
@@ -292,9 +292,9 @@ class App(Notifier):
                                 self.deviceData = self.devInt.receivePacket()
                             if self.deviceData is None: continue
 
-                            self.nativeData = self.device.unwrap(self.deviceData)
+                            self.deviceData = self.device.unwrap(self.deviceData)
                             try:
-                                if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.nativeData)
+                                if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.deviceData)
                             except SerialWriteTimeoutError:
                                 if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
                                     if self.appInt.nTimeouts < 2:
@@ -394,7 +394,20 @@ class App(Notifier):
                     f"'{com.port}', {com.baudrate}, {com.bytesize}-{com.parity}-{com.stopbits}")
 
         def test(*args):
-            cmd.debug('Test function output. Args: ' + ', '.join(args))
+            cmd.debug("Test function output. Args: " + (', '.join(args) if args else '<None>'))
+            if not args:
+                cmd.error("No parameters — nothing to do")
+                return
+            elif (args[0] == 'MOSSim'):
+                self.device.IDLE_PAYLOAD = bytes.fromhex('85 43 00 04 00 04 00 00 00 00')
+            elif args[0] == 'NCS':
+                self.device.IDLE_PAYLOAD = bytes.fromhex('00 01 00 00 00 00 00 00 29 01 00 00')
+            elif args[0] == 'Default':
+                self.device.IDLE_PAYLOAD = bytes.fromhex('00 01 01 00 00 00 00 00 00 00 00 00')
+            else:
+                cmd.error(f"No such option defined: {args[0]}")
+                return
+            cmd.debug(f"{self.device.name} protocol default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
 
         print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
@@ -406,7 +419,7 @@ class App(Notifier):
         command = ''
         while True:
             try:
-                prompt = '↻► ' if self.commRunning else '—► '
+                prompt = '——► ' if self.commRunning else '——> '
                 userinput = input(prompt)
                 if (userinput.strip() == ''):
                     if self.commRunning:
@@ -514,7 +527,7 @@ class App(Notifier):
                         if self.commRunning:
                             raise ApplicationError("Cannot change port number when communication is running")
                         direction = params[1]
-                        newPortNum = params[2].strip('0')
+                        newPortNum = params[2].lstrip('0')
                         if direction.lower() not in ('in', 'out'):
                             raise CommandError("Com port specification is invalid. Expected [in|out]")
                         if not newPortNum.isdecimal():
@@ -526,7 +539,7 @@ class App(Notifier):
                         interface = self.appInt if direction == 'in' else self.devInt
                         interface.port = 'COM' + newPortNum
                         cmd.info(f"'{direction.capitalize()}' COM port changed to {interface.port}")
-                    else: raise CommandError("Wrong parameters", event='params')
+                    else: raise CommandError("Wrong parameters")
 
                 elif command == 'p':
                     if len(params) < 2:

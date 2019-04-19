@@ -4,12 +4,11 @@ from bits import bitsarray, flags
 from checksums import rfc1071
 from logger import Logger
 from utils import bytewise
-from device import Device, Par, Prop
+
+from device import Device, Par, Prop, DataInvalidError
 from serial_transceiver import BadDataError, SerialCommunicationError, BadRfcError
 
 log = Logger("MWXC")
-
-# TODO: test all this class
 
 
 class MWXC(Device):
@@ -18,8 +17,8 @@ class MWXC(Device):
     NATIVE_TIMEOUT: float = 0.2
     NATIVE_PARITY: str = 'O'
     NATIVE_BAUDRATE: int = 115200
-    DEFAULT_PAYLOAD: bytes = bytes.fromhex('00 85 43 00 04 00 04 00 00 00 00')
-    IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD  # TODO: IDLE_PAYLOAD not the same as DEFAULT_PAYLOAD
+    DEFAULT_PAYLOAD: bytes = bytes.fromhex('01 01 00 00 00 00 00 00 00 00 00')
+    IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
     # internal service attrs
     NATIVE_STARTBYTE_COMMAND: bytes = b'\xA0'
@@ -71,15 +70,12 @@ class MWXC(Device):
             raise BadDataError(f"Bad packet (data too small, [{len(nativePacket)}] out of [{self.NATIVE_PACKET_SIZE}])",
                                dataname="Packet", data=nativePacket)
         if (int.from_bytes(rfc1071(nativePacket), byteorder='big') != 0):
-                raise BadRfcError(f"Bad packet checksum (expected '{bytewise(rfc1071(nativePacket[:-2]))}', "
-                                  f"got '{bytewise(nativePacket[-2:])}'). Packet discarded",
-                                  dataname="Packet", data=nativePacket)
-
-        self.validateCommandNative(nativePacket)
-        return nativePacket[1:-2]
-
-    def validateCommandNative(self, packet: bytes):
-        return True  # TODO: MWXC.validateCommandNative
+            raise BadRfcError(f"Bad packet checksum (expected '{bytewise(rfc1071(nativePacket[:-2]))}', "
+                              f"got '{bytewise(nativePacket[-2:])}'). Packet discarded",
+                              dataname="Packet", data=nativePacket)
+        self.IDLE_PAYLOAD = nativePacket[1:-2]
+        return self.IDLE_PAYLOAD
 
     def validateReply(self, reply: bytes):
-        return True  # TODO: MWXC.validateReply
+        if (len(reply) != 18): raise DataInvalidError(f"Invalid reply packet size (expected 18, "
+                                                      f"got {len(reply)})", dataname='Packet', data=reply)
