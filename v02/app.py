@@ -9,6 +9,7 @@ from typing import Union
 from logger import Logger
 from utils import bytewise, castStr
 
+from config_loader import ConfigLoader
 from device import Device, DataInvalidError
 from notifier import Notifier
 from serial_transceiver import (SerialTransceiver, PelengTransceiver, SerialError, SerialCommunicationError,
@@ -36,8 +37,9 @@ class CommandWarning(ApplicationError):
 
 
 class ProtocolLoader(dict):
-    def __init__(self, basePath: str, folder: str):
+    def __init__(self, basePath: str = None, folder: str = 'devices'):
         super().__init__()
+        if basePath is None: basePath = dirname(abspath(__file__))
         self.protocolsPath = joinpath(basePath, folder)
         if not isdir(self.protocolsPath):
             # TODO: catch this error in ui and ask for valid protocols path
@@ -74,24 +76,26 @@ class ProtocolLoader(dict):
             return deviceClass
 
 
+class CONFIG():
+    DEVICES_FOLDER_REL: str = 'devices'
+    DEFAULT_APP_COM_PORT: str = 'COM11'
+    DEFAULT_DEV_COM_PORT: str = 'COM1'
+    DEVICE_TIMEOUT: float = 0.5  # sec
+    SMALL_TIMEOUT_DELAY: float = 0.5  # sec
+    BIG_TIMEOUT_DELAY: int = 5  # sec
+    NO_REPLY_HOPELESS: int = 50  # timeouts
+    NATIVE_SOFT_COMM_MODE: bool = True
+
+
 class App(Notifier):
     VERSION: str = '0.2'
     PROJECT_FOLDER: str = dirname(abspath(__file__))
-    DEVICES_FOLDER_REL = 'devices'
-    DEVICES = None
-
-    class CONFIG:
-        INTERFACES: tuple = ('serial', 'ethernet')
-        DEFAULT_APP_COM_PORT: str = 'COM11'
-        DEFAULT_DEV_COM_PORT: str = 'COM1'
-        DEVICE_TIMEOUT: float = 0.5  # sec
-        SMALL_TIMEOUT_DELAY: float = 0.5  # sec
-        BIG_TIMEOUT_DELAY: int = 5  # sec
-        NO_REPLY_HOPELESS: int = 50  # timeouts
-        NATIVE_SOFT_COMM_MODE: bool = True
+    protocols = None
 
     def __init__(self):
         super().__init__()
+        # CONFIG.load('APP', self.PROJECT_FOLDER)
+        self.protocols = ProtocolLoader(self.PROJECT_FOLDER, CONFIG.DEVICES_FOLDER_REL)
 
         self.cmdThread: threading.Thread = None
         self.commThread: threading.Thread = None
@@ -104,7 +108,7 @@ class App(Notifier):
         }
 
         self.device: Device = None  # while device is None, comm interfaces are not initialized
-        self.interactWithNativeSoft: bool = self.CONFIG.NATIVE_SOFT_COMM_MODE
+        self.interactWithNativeSoft: bool = CONFIG.NATIVE_SOFT_COMM_MODE
 
         # when communication is running, these ▼ attrs should be accessed only from inside commThread!
         self.appInt: SerialTransceiver = None  # serial interface to native communication soft (virtual port)
@@ -113,15 +117,17 @@ class App(Notifier):
         self.nativeData: bytes = None
         self.deviceData: bytes = None
 
-        #
+    def __enter__(self):
         self.init()
 
-    def init(self):
-        self.DEVICES = ProtocolLoader(self.PROJECT_FOLDER, self.DEVICES_FOLDER_REL)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.commThread: self.commThread.join()
+        # TODO: CONFIG.saveConfigFile()
 
-        log.debug(f"Launched from: {abspath(__file__)}")
-        log.info(f"Project directory: {self.PROJECT_FOLDER}")
-        log.info(f"Protocols directory: {joinpath(self.PROJECT_FOLDER, self.DEVICES.directory)}")
+    def init(self):
+        log.debug(f"Launched from:      {abspath(__file__)}")
+        log.info(f"Project directory:   {self.PROJECT_FOLDER}")
+        log.info(f"Protocols directory: {joinpath(self.PROJECT_FOLDER, self.protocols.directory)}")
 
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
@@ -140,7 +146,7 @@ class App(Notifier):
         if intType.lower() == 'virtual serial':
             return SerialTransceiver()
         elif intType.lower() == 'serial':
-            return PelengTransceiver(timeout=self.CONFIG.DEVICE_TIMEOUT)
+            return PelengTransceiver(timeout=CONFIG.DEVICE_TIMEOUT)
         elif intType.lower() == 'ethernet':
             log.error(f"Interface {intType} is not supported currently")
             return NotImplemented
@@ -148,13 +154,13 @@ class App(Notifier):
 
     def initInterfaces(self):
         self.appInt = self.getInterface('virtual serial')
-        self.appInt.port = self.CONFIG.DEFAULT_APP_COM_PORT
+        self.appInt.port = CONFIG.DEFAULT_APP_COM_PORT
         self.devInt = self.getInterface(self.device.COMMUNICATION_INTERFACE)
-        self.devInt.port = self.CONFIG.DEFAULT_DEV_COM_PORT
+        self.devInt.port = CONFIG.DEFAULT_DEV_COM_PORT
         self.devInt.device = self.device.DEVICE_ADDRESS
 
     def setProtocol(self, deviceName: str):
-        self.device = self.DEVICES[deviceName]()
+        self.device = self.protocols[deviceName]()
         if not self.appInt and not self.devInt: self.initInterfaces()
         if self.devInt.INTERFACE_NAME != self.device.COMMUNICATION_INTERFACE:
             log.error("Only serial interface is supported currently. Interface property is ignored.")
@@ -235,8 +241,8 @@ class App(Notifier):
                 tlog.debug(f"No reply from {subject} device [{self.devInt.nTimeouts}]")
             # TODO: redesign this ▼ to set new timer interval to 5x transaction period
             #  when scheduler will be used instead of 'for loop' for triggering transactions
-            stopEvent.wait(self.CONFIG.SMALL_TIMEOUT_DELAY if self.devInt.nTimeouts < self.CONFIG.NO_REPLY_HOPELESS
-                           else self.CONFIG.BIG_TIMEOUT_DELAY)
+            stopEvent.wait(CONFIG.SMALL_TIMEOUT_DELAY if self.devInt.nTimeouts < CONFIG.NO_REPLY_HOPELESS
+                           else CONFIG.BIG_TIMEOUT_DELAY)
         except BadDataError as e:
             tlog.error(f"Received corrupted data from '{subject}' device")
             tlog.info("Packet discarded")
@@ -304,7 +310,7 @@ class App(Notifier):
                                                f"(native communication soft disconnected?)")
                                     # TODO: what needs to be done when unexpected error happens [3]?
 
-                            # TODO: self.ui.update()
+                            # TODO: self.triggerEvent(ui_update)
 
                 except (SerialError, DataInvalidError) as e:
                     tlog.fatal(f"Transaction failed: {e}")
@@ -414,7 +420,7 @@ class App(Notifier):
         print()
         cmd.info(showHelp())
         print()
-        cmd.info(f"Available protocols: {', '.join(self.DEVICES)}")
+        cmd.info(f"Available protocols: {', '.join(self.protocols)}")
 
         command = ''
         while True:
@@ -470,9 +476,9 @@ class App(Notifier):
                     elif elem in ('par', 'params'):
                         cmd.info(self.device.params)
                     elif elem in ('conf', 'config'):
-                        for par in self.CONFIG.__dict__:
+                        for par in CONFIG.__dict__:  # FIXME: will not work with new config — redesign
                             if par == par.strip('__'):
-                                cmd.info(f"{par} = {getattr(self.CONFIG, par)}")
+                                cmd.info(f"{par} = {getattr(CONFIG, par)}")
                     elif elem in ('this', 'self', 'app', 'state'):
                         cmd.info(NotImplemented)
                     elif elem in ('l', 'log'):
@@ -545,7 +551,7 @@ class App(Notifier):
                     if len(params) < 2:
                         raise CommandError("Specify new device name")
                     newDeviceName = params[1].lower()
-                    if newDeviceName not in self.DEVICES:
+                    if newDeviceName not in self.protocols:
                         raise CommandError(f"No such device: '{newDeviceName}'")
                     self.setProtocol(newDeviceName)
 
@@ -591,4 +597,4 @@ class App(Notifier):
 
 if __name__ == '__main__':
     Logger.LOGGERS["Device"].setLevel("INFO")
-    App()
+    with App(): pass
