@@ -1,14 +1,9 @@
 import threading
 import time
 import unittest
+
 from logger import Logger
-
-from utils import auto_repr, bytewise
-
-import serial_transceiver
-from device import DeviceError
-from devices.sony import DataInvalidError
-from serial_transceiver import SerialError, PelengTransceiver, SerialTransceiver
+from utils import auto_repr, bytewise, formatDict
 
 log = Logger("Tests")
 
@@ -19,6 +14,8 @@ def testRaiseRuntimeError():
 
 class DeviceMock:
     def __init__(self, adr, commandsAndReplies, stopEvent):
+        from serial_transceiver import SerialTransceiver, SerialError
+
         try: self.tr = SerialTransceiver(port='COM11')
         except SerialError as e: print("WARNING!" + e.args[0])
         else: self.tr.close()
@@ -59,9 +56,11 @@ class DeviceMock:
 
 class Test(unittest.TestCase):
 
-    # FIXME: terrible test design - refactor everything :(
+    # FIXME: Arr, terrible test design, refactor everything :(
 
     def test_receivePacket(self):
+        from serial_transceiver import PelengTransceiver, BadRfcError, BadDataError
+
         tr = PelengTransceiver(device=12, port='COM10', timeout=0.2)
         stopEvent = threading.Event()
 
@@ -115,20 +114,20 @@ class Test(unittest.TestCase):
             # input('Press smth to start! >>>')
 
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
-            self.assertRaises(serial_transceiver.BadRfcError, sendCommand)  # 'bad_rfc'
-            self.assertRaises(serial_transceiver.BadRfcError, sendCommand)  # 'rev_rfc'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'no_zerobyte'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_startbyte'
+            self.assertRaises(BadRfcError, sendCommand)  # 'bad_rfc'
+            self.assertRaises(BadRfcError, sendCommand)  # 'rev_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'no_zerobyte'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_startbyte'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_header_and_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_header_and_rfc'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'bad_adr'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_adr_and_rfc'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_len'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_len_and_rfc'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_header_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_adr_and_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_len'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_len_and_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'bad_header_rfc'
             # dev.tr.reset_input_buffer()
             # self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'bad_header_rfc_clean'
-            self.assertRaises(serial_transceiver.BadDataError, sendCommand)  # 'rev_header_rfc'
+            self.assertRaises(BadDataError, sendCommand)  # 'rev_header_rfc'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # ▼ 'double_chch'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
@@ -176,6 +175,7 @@ class Test(unittest.TestCase):
                 return len(data)
 
         from devices.sony import SONY
+        from device import DataInvalidError, DeviceError
         d = SONY()
 
         packets = (
@@ -297,6 +297,141 @@ class Test(unittest.TestCase):
         print('—'*80)
 
         del SONY
+
+
+    def test_ConfigLoader(self):
+        from contextlib import contextmanager
+        from io import StringIO
+        from unittest.mock import patch
+        from unittest.mock import MagicMock
+
+        import config_loader
+
+        class MockTextFile(StringIO):
+            def __init__(self, data): super().__init__(data)
+            @contextmanager
+            def open(self, *args): yield self
+            def close(self, *args): super().close()
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+
+        @contextmanager
+        def reloadTestConfig():
+            from config_loader import ConfigLoader
+            class TEST_CONFIG(ConfigLoader):
+                A = 1
+                B = 2
+                C = 3.4
+                D = None
+
+            log.setOthersTo('WARNING')
+
+            yield TEST_CONFIG
+
+            del ConfigLoader, TEST_CONFIG
+            config_loader.CONFIG_CLASSES = set()
+            config_loader.CONFIGS_DICT = None
+
+        # —————————————————————————————————————————————————————————————————————————————————— #
+
+        with reloadTestConfig() as TEST, self.assertRaises(NotImplementedError):
+            log.debug("load not subclassed")
+            TEST.__bases__[0].load('TEST')
+
+        with reloadTestConfig() as TEST, self.assertRaises(ValueError):
+            log.debug("load invalid path")
+            TEST.load("TEST", "C:\\Window\\")
+
+        with reloadTestConfig() as TEST, self.assertRaises(ValueError):
+            log.debug("load path is not directory")
+            TEST.load("TEST", r"C:\Windows\explorer.exe")
+
+        with reloadTestConfig() as TEST:
+            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
+                log.debug("default path and section args")
+                TEST.load("TEST")
+                self.assertEqual(len(config_loader.CONFIG_CLASSES), 1)
+                self.assertTrue(TEST in config_loader.CONFIG_CLASSES)
+
+        with reloadTestConfig() as TEST:
+            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
+                log.debug("Existing configs dict")
+                config_loader.CONFIGS_DICT = {'TEST': {'A':100500, 'B':42, 'D':-0}}
+                print(formatDict(config_loader.CONFIGS_DICT))
+                TEST.load("TEST")
+                self.assertEqual(TEST.A, 100500)
+                self.assertEqual(TEST.B, 42)
+                self.assertEqual(TEST.C, 3.4)
+
+        with reloadTestConfig() as TEST:
+            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
+                log.debug("Existing configs dict with invalid parameter types")
+                config_loader.CONFIGS_DICT = {'TEST': {'A':'par_a', 'B':'par_b', 'D':'par_d'}}
+                print(formatDict(config_loader.CONFIGS_DICT))
+                TEST.load("TEST")
+                self.assertEqual(TEST.A, 1)
+                self.assertEqual(TEST.B, 2)
+                self.assertEqual(TEST.C, 3.4)
+
+        with reloadTestConfig() as TEST:
+            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock(return_value=dict(TEST={'A':42}))):
+                log.debug("Creating configs dict in load")
+                TEST.load("TEST")
+                self.assertEqual(TEST.A, 42)
+                self.assertEqual(TEST.B, 2)
+                self.assertEqual(TEST.C, 3.4)
+
+        with reloadTestConfig() as TEST:
+            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock(return_value=dict(WRONG={'A':42}))):
+                log.debug("Wrong section")
+                TEST.load("TEST")
+                self.assertEqual(config_loader.CONFIGS_DICT['WRONG'], {'A':42})
+                self.assertEqual(TEST.A, 1)
+                self.assertEqual(TEST.B, 2)
+                self.assertEqual(TEST.C, 3.4)
+
+        d = """
+        TEST:
+          A:     ~
+          B:     42
+          WRONG: 'lol'
+          C:     7
+          D:     100500
+        TEST2:
+          X:     null
+          D:     whatever
+        """
+
+        r = dict(TEST={
+                    'A': None,
+                    'B': 42,
+                    'WRONG': 'lol',
+                    'C': 7,
+                    'D': 100500,
+                 },
+                TEST2={
+                    'X': None,
+                    'D': 'whatever'
+                })
+
+        with reloadTestConfig() as TEST, reloadTestConfig() as TEST2:
+            mf = MockTextFile(d)
+            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()),\
+                    patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                log.debug("Complicated 2-sectioned config")
+
+                TEST.filePath = mf
+                TEST.load("TEST")
+                TEST2.load("TEST2")
+
+
+                self.assertEqual(config_loader.CONFIGS_DICT, r)
+                self.assertEqual(TEST.A, 1)
+                self.assertEqual(TEST.B, 42)
+                self.assertEqual(TEST.C, 7.0)
+                self.assertEqual(TEST.D, 100500)
+
+                self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D), (1,2,3.4,'whatever'))
 
 
 if __name__ == '__main__':

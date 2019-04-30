@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from os import linesep
 from os.path import join as joinpath, dirname, abspath, isdir
-from typing import Optional, Dict, List, Type, Set
+from typing import Optional, Dict, Type, Set
 
 from logger import Logger
 from ruamel.yaml import YAML, YAMLError
@@ -45,20 +45,20 @@ class ConfigLoader:
 
         global CONFIGS_DICT  # :/
         if CONFIGS_DICT is None:  # call ConfigLoader for the first time ——► load config from .yaml file
-            CONFIGS_DICT = dict(cls._loadFromFile_())
+            CONFIGS_DICT = cls._loadFromFile_()
             log.debug(f"CONFIGS DICT: {formatDict(CONFIGS_DICT) if CONFIGS_DICT else '<None>'}")
             if CONFIGS_DICT is None:  # configDict is still None ——► configDict construction from .yaml file failed
                 return  # ◄ use class attrs when querying config params
 
         try:
-            configFileDict = CONFIGS_DICT[cls._section_]
+            configFileDict = CONFIGS_DICT[cls._section_].copy()
         except KeyError:
             log.warning(f"Cannot find section {cls._section_} in config file. Creating new one with defaults.")
             CONFIGS_DICT[cls._section_] = {parName: getattr(cls, parName) for parName in cls.params()}
             log.debug(f"New section added: {cls._section_} {formatDict(CONFIGS_DICT[cls._section_])}")
             return  # ◄ use class attrs when querying config params
 
-        missingParams, invalidTypeParams = [], []
+        missingParams, invalidTypeParams = [], []  # FIXME: invalidTypeParams handling similar to missingParams
         for parName in cls.params():
             currPar = getattr(cls, parName)
             try: newPar = configFileDict.pop(parName)
