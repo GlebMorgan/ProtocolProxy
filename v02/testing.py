@@ -308,11 +308,29 @@ class Test(unittest.TestCase):
         import config_loader
 
         class MockTextFile(StringIO):
-            def __init__(self, data): super().__init__(data)
+            def __init__(self, data=None):
+                self.dataList = [data, ] if data else []
+                super().__init__(data)
+
             @contextmanager
-            def open(self, *args): yield self
-            def close(self, *args): super().close()
+            def open(self, self_mock, mode='rt', *args):
+                if ('w' not in mode) and (not self.dataList): raise FileNotFoundError
+                yield self
+
+            def close(self, *args):
+                super().close()
+
+            def write(self, data, *args, **kwargs):
+                log.debug(f"MockTextFile —> requested write {len(data)} characters with args={args} and kwargs={kwargs}")
+                self.dataList.append(data)
+                return len(data)
+
+            def read(self, *args, **kwargs):
+                log.debug(f"MockTextFile —> requested read {args[0]} characters with args={args} and kwargs={kwargs}")
+                return self.dataList.pop() if self.dataList else ''
+
             def __enter__(self): return self
+
             def __exit__(self, *args): pass
 
         @contextmanager
@@ -324,114 +342,391 @@ class Test(unittest.TestCase):
                 C = 3.4
                 D = None
 
-            log.setOthersTo('WARNING')
+            # log.setOthersTo('WARNING')
 
             yield TEST_CONFIG
 
             del ConfigLoader, TEST_CONFIG
             config_loader.CONFIG_CLASSES = set()
-            config_loader.CONFIGS_DICT = None
+            config_loader.CONFIGS_DICT = {}
+
+        @contextmanager
+        def reloadEmptyTestConfig():
+            from config_loader import ConfigLoader
+            class TEST_CONFIG(ConfigLoader):
+                pass
+
+            # log.setOthersTo('WARNING')
+
+            yield TEST_CONFIG
+
+            del ConfigLoader, TEST_CONFIG
+            config_loader.CONFIG_CLASSES = set()
+            config_loader.CONFIGS_DICT = {}
 
         # —————————————————————————————————————————————————————————————————————————————————— #
 
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Load not subclassed")
         with reloadTestConfig() as TEST, self.assertRaises(NotImplementedError):
-            log.debug("load not subclassed")
             TEST.__bases__[0].load('TEST')
 
-        with reloadTestConfig() as TEST, self.assertRaises(ValueError):
-            log.debug("load invalid path")
-            TEST.load("TEST", "C:\\Window\\")
-
-        with reloadTestConfig() as TEST, self.assertRaises(ValueError):
-            log.debug("load path is not directory")
-            TEST.load("TEST", r"C:\Windows\explorer.exe")
-
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Default path and section args")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
-                log.debug("default path and section args")
+            with patch('config_loader.ConfigLoader.save', new=MagicMock()):
                 TEST.load("TEST")
                 self.assertEqual(len(config_loader.CONFIG_CLASSES), 1)
                 self.assertTrue(TEST in config_loader.CONFIG_CLASSES)
 
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Existing configs dict")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
-                log.debug("Existing configs dict")
+            with patch('config_loader.ConfigLoader.save', new=MagicMock()):
                 config_loader.CONFIGS_DICT = {'TEST': {'A':100500, 'B':42, 'D':-0}}
                 print(formatDict(config_loader.CONFIGS_DICT))
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 100500)
                 self.assertEqual(TEST.B, 42)
                 self.assertEqual(TEST.C, 3.4)
+                self.assertEqual(TEST.D, 0)
 
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Existing configs dict with invalid parameter types")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()):
-                log.debug("Existing configs dict with invalid parameter types")
+            with patch('config_loader.ConfigLoader.save', new=MagicMock()):
                 config_loader.CONFIGS_DICT = {'TEST': {'A':'par_a', 'B':'par_b', 'D':'par_d'}}
                 print(formatDict(config_loader.CONFIGS_DICT))
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 1)
                 self.assertEqual(TEST.B, 2)
                 self.assertEqual(TEST.C, 3.4)
+                self.assertEqual(TEST.D, 'par_d')
 
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Creating configs dict in load")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock(return_value=dict(TEST={'A':42}))):
-                log.debug("Creating configs dict in load")
+            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
+                config_loader.CONFIGS_DICT['TEST'] = dict(A=42)
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 42)
                 self.assertEqual(TEST.B, 2)
                 self.assertEqual(TEST.C, 3.4)
+                self.assertEqual(TEST.D, None)
 
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Wrong section")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock(return_value=dict(WRONG={'A':42}))):
-                log.debug("Wrong section")
+            with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
+                config_loader.CONFIGS_DICT['WRONG'] = dict(A=42)
                 TEST.load("TEST")
                 self.assertEqual(config_loader.CONFIGS_DICT['WRONG'], {'A':42})
                 self.assertEqual(TEST.A, 1)
                 self.assertEqual(TEST.B, 2)
                 self.assertEqual(TEST.C, 3.4)
+                self.assertEqual(TEST.D, None)
 
-        d = """
-        TEST:
-          A:     ~
-          B:     42
-          WRONG: 'lol'
-          C:     7
-          D:     100500
-        TEST2:
-          X:     null
-          D:     whatever
-        """
-
-        r = dict(TEST={
-                    'A': None,
-                    'B': 42,
-                    'WRONG': 'lol',
-                    'C': 7,
-                    'D': 100500,
-                 },
-                TEST2={
-                    'X': None,
-                    'D': 'whatever'
-                })
-
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Complicated 2-sectioned config")
         with reloadTestConfig() as TEST, reloadTestConfig() as TEST2:
-            mf = MockTextFile(d)
-            with patch('config_loader.ConfigLoader.saveToFile', new=MagicMock()),\
-                    patch('builtins.open', new=MagicMock(wraps=mf.open)):
-                log.debug("Complicated 2-sectioned config")
+            d = """
+                TEST:
+                  A:     ~
+                  B:     42
+                  WRONG: 'lol'
+                  C:     7
+                  D:     100500
+                TEST2:
+                  X:     null
+                  C:     will_fail
+                  D:     whatever
+                """
 
-                TEST.filePath = mf
+            CD = dict(
+                    TEST={
+                        'A': None,
+                        'B': 42,
+                        'C': 7,
+                        'D': 100500,
+                    },
+                    TEST2={
+                        'X': None,
+                        'C': 'will_fail',
+                        'D': 'whatever',
+                    },
+            )
+
+            mf = MockTextFile(d)
+            with patch('config_loader.ConfigLoader.save', new=MagicMock()), \
+                    patch('builtins.open', new=MagicMock(wraps=mf.open)):
+
+                config_loader.ConfigLoader.filePath = mf
+                TEST2.X = 'will_be_overriden'
+
                 TEST.load("TEST")
                 TEST2.load("TEST2")
 
 
-                self.assertEqual(config_loader.CONFIGS_DICT, r)
-                self.assertEqual(TEST.A, 1)
-                self.assertEqual(TEST.B, 42)
-                self.assertEqual(TEST.C, 7.0)
-                self.assertEqual(TEST.D, 100500)
+                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (None, 42, 7.0, 100500))
+                self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1,2,3.4,'whatever', None))
 
-                self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D), (1,2,3.4,'whatever'))
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Non-existing initial config file")
+        with reloadTestConfig() as TEST, reloadTestConfig() as TEST2:
+            ICD = {
+                'TEST': {
+                    'A': 1,
+                    'B': 2,
+                    'C': 3.4,
+                    'D': None,
+                },
+                'TEST2': {
+                    'A': 1,
+                    'B': 2,
+                    'C': 3.4,
+                    'D': None,
+                    'X': 'somestr',
+                },
+            }
+
+            mf = MockTextFile()
+            with patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                TEST2.X = 'somestr'
+                config_loader.ConfigLoader.filePath = mf
+                TEST.load("TEST")
+                TEST2.load('TEST2')
+                self.assertEqual(config_loader.CONFIGS_DICT, ICD)
+                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), None)
+                self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (1,2,3.4,None))
+                self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1,2,3.4,None, 'somestr'))
+
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Save complicated 2-sectioned config")
+        with reloadTestConfig() as TEST, reloadTestConfig() as TEST2:
+            d = """
+                TEST:
+                  A:     ~
+                  B:     42
+                  WRONG: 'lol'
+                  C:     7
+                  D:     100500
+                TEST2:
+                  X:     12
+                  C:     will_fail
+                  D:     ''
+                """
+
+            CD = dict(
+                    TEST={
+                        'A': None,
+                        'B': 42,
+                        'C': 7,
+                        'D': 100500,
+                    },
+                    TEST2={
+                        'X': 12,
+                        'C': 'will_fail',
+                        'D': '',
+                    },
+            )
+
+            savedCD = dict(
+                    TEST={
+                        'A': None,
+                        'B': 42,
+                        'C': 7.0,
+                        'D': 100500,
+                    },
+                    TEST2={
+                        'A': 1,
+                        'B': 2,
+                        'C': 3.4,
+                        'D': '',
+                        'X': '12',
+                    },
+            )
+
+            mf = MockTextFile(d)
+            with patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                TEST2.X = ''
+                TEST2.D = 'thisWillUpdate'
+                config_loader.ConfigLoader.filePath = mf
+
+                self.assertEqual(TEST2.D, 'thisWillUpdate')
+
+                TEST.load("TEST")
+                TEST2.load("TEST2")
+
+                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (None, 42, 7.0, 100500))
+                self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1, 2, 3.4, '', '12'))
+
+                TEST.save()
+                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
+                print(formatDict(config_loader.CONFIGS_DICT))
+
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Load path is not directory")
+        with reloadEmptyTestConfig() as TEST, reloadEmptyTestConfig() as TEST2:
+            TEST.A = 'par_a'
+            TEST.B = None
+
+            TEST2.X = 'par_x'
+            TEST2.Y = 42
+
+            configFile = """
+                TEST:
+                  A:     par_a
+                  B:     ~
+                  WRONG: 'lol'
+                TEST2:
+                  X:     new_x
+                  Y:     wrong_type
+                """
+
+            savedCD = dict(
+                    TEST={
+                        'A': 'par_a',
+                        'B': None,
+                    },
+                    TEST2={
+                        'X': 'new_x',
+                        'Y': 42,
+                    }
+            )
+
+            mf = MockTextFile(configFile)
+            with patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                TEST.load("TEST", path=r"C:\Windows\explorer.exe")
+                TEST2.load("TEST2", path=r"Invalid_path/lol")
+
+                self.assertEqual((TEST.A, TEST.B), ('par_a', None))
+                self.assertEqual((TEST2.X, TEST2.Y), ('new_x', 42))
+
+                TEST.save()
+                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
+
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("No section present in config file")
+        with reloadEmptyTestConfig() as TEST, reloadEmptyTestConfig() as TEST2:
+            TEST.A = 'par_a'
+            TEST.B = ''
+
+            TEST2.X = 'par_x'
+            TEST2.Y = 42
+
+            configFile = """
+                WRONG:
+                  A:     par_a
+                  B:     ~
+                  WRONG_PAR: 'lol'
+                TEST2:
+                  X:     new_x
+                  Y:     3
+                """
+
+            CD = dict(
+                    TEST={
+                        'A': 'par_a',
+                        'B': '',
+                    },
+                    TEST2={
+                        'X': 'new_x',
+                        'Y': 3
+                    },
+                    WRONG={
+                        'A': 'par_a',
+                        'B': None,
+                        'WRONG_PAR': 'lol',
+                    },
+            )
+
+            savedCD = dict(
+                    WRONG={
+                        'A': 'par_a',
+                        'B': None,
+                        'WRONG_PAR': 'lol',
+                    },
+                    TEST={
+                        'A': 'par_a',
+                        'B': '',
+                    },
+                    TEST2={
+                        'X': 'new_x',
+                        'Y': 0,
+                    }
+            )
+
+            mf = MockTextFile(configFile)
+            with patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                TEST.load("TEST")  # will fail, no such section
+                TEST2.load("TEST2")
+
+                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual((TEST.A, TEST.B), ('par_a', ''))
+                self.assertEqual((TEST2.X, TEST2.Y), ('new_x', 3))
+
+                TEST2.Y = 0
+
+                TEST.save()
+
+                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
+
+        log.debug('—'*100 + '\n'*10)
+        log.debug('—'*100)
+        log.debug("Config does not change")
+        with reloadEmptyTestConfig() as TEST, reloadEmptyTestConfig() as TEST2:
+            TEST.A = 'par_a'
+            TEST.B = ''
+
+            TEST2.X = 'par_x'
+            TEST2.Y = 42
+
+            configFile = """
+                TEST:
+                  A:     par_a
+                  B:     ''
+                  WRONG_PAR: 'lol'
+                TEST2:
+                  X:     par_x
+                  Y:     42
+                """
+
+            CD = dict(
+                    TEST={
+                        'A': 'par_a',
+                        'B': '',
+                    },
+                    TEST2={
+                        'X': 'par_x',
+                        'Y': 42,
+                    }
+            )
+
+            mf = MockTextFile(configFile)
+            with patch('builtins.open', new=MagicMock(wraps=mf.open)):
+                TEST.load("TEST")
+                TEST2.load("TEST2")
+
+                self.assertEqual((TEST.A, TEST.B), ('par_a', ''))
+                self.assertEqual((TEST2.X, TEST2.Y), ('par_x', 42))
+
+                TEST.save()
+
+                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), None)
 
 
 if __name__ == '__main__':
