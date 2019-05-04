@@ -376,16 +376,18 @@ class Test(unittest.TestCase):
         log.debug('—'*100)
         log.debug("Default path and section args")
         with reloadTestConfig() as TEST:
-            with patch('config_loader.ConfigLoader.save', new=MagicMock()):
+            with patch('config_loader.ConfigLoader.save', new=MagicMock()), \
+                    patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
+                config_loader.ConfigLoader.filePath = MockTextFile()
                 TEST.load("TEST")
-                self.assertEqual(len(config_loader.CONFIG_CLASSES), 1)
-                self.assertTrue(TEST in config_loader.CONFIG_CLASSES)
+                self.assertTrue(TEST not in config_loader.CONFIG_CLASSES)
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
         log.debug("Existing configs dict")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader.save', new=MagicMock()):
+                config_loader.ConfigLoader.filePath = MockTextFile()
                 config_loader.CONFIGS_DICT = {'TEST': {'A':100500, 'B':42, 'D':-0}}
                 print(formatDict(config_loader.CONFIGS_DICT))
                 TEST.load("TEST")
@@ -399,6 +401,7 @@ class Test(unittest.TestCase):
         log.debug("Existing configs dict with invalid parameter types")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader.save', new=MagicMock()):
+                config_loader.ConfigLoader.filePath = MockTextFile()
                 config_loader.CONFIGS_DICT = {'TEST': {'A':'par_a', 'B':'par_b', 'D':'par_d'}}
                 print(formatDict(config_loader.CONFIGS_DICT))
                 TEST.load("TEST")
@@ -412,6 +415,7 @@ class Test(unittest.TestCase):
         log.debug("Creating configs dict in load")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
+                config_loader.ConfigLoader.filePath = MockTextFile()
                 config_loader.CONFIGS_DICT['TEST'] = dict(A=42)
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 42)
@@ -424,6 +428,7 @@ class Test(unittest.TestCase):
         log.debug("Wrong section")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
+                config_loader.ConfigLoader.filePath = MockTextFile()
                 config_loader.CONFIGS_DICT['WRONG'] = dict(A=42)
                 TEST.load("TEST")
                 self.assertEqual(config_loader.CONFIGS_DICT['WRONG'], {'A':42})

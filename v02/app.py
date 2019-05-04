@@ -76,7 +76,7 @@ class ProtocolLoader(dict):
             return deviceClass
 
 
-class CONFIG():
+class CONFIG(ConfigLoader):
     DEVICES_FOLDER_REL: str = 'devices'
     DEFAULT_APP_COM_PORT: str = 'COM11'
     DEFAULT_DEV_COM_PORT: str = 'COM1'
@@ -94,7 +94,7 @@ class App(Notifier):
 
     def __init__(self):
         super().__init__()
-        # CONFIG.load('APP', self.PROJECT_FOLDER)
+        CONFIG.load('APP', self.PROJECT_FOLDER)
         self.protocols = ProtocolLoader(self.PROJECT_FOLDER, CONFIG.DEVICES_FOLDER_REL)
 
         self.cmdThread: threading.Thread = None
@@ -122,6 +122,7 @@ class App(Notifier):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.commThread: self.commThread.join()
+        CONFIG.save()
         # TODO: CONFIG.saveConfigFile()
 
     def init(self):
@@ -132,6 +133,7 @@ class App(Notifier):
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
+        self.cmdThread.join()
 
     @contextmanager
     def restartNeeded(self):
@@ -406,14 +408,22 @@ class App(Notifier):
                 return
             elif (args[0] == 'MOSSim'):
                 self.device.IDLE_PAYLOAD = bytes.fromhex('85 43 00 04 00 04 00 00 00 00')
+                cmd.debug(f"{self.device.name} default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
             elif args[0] == 'NCS':
                 self.device.IDLE_PAYLOAD = bytes.fromhex('00 01 00 00 00 00 00 00 29 01 00 00')
+                cmd.debug(f"{self.device.name} default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
             elif args[0] == 'Default':
                 self.device.IDLE_PAYLOAD = bytes.fromhex('00 01 01 00 00 00 00 00 00 00 00 00')
+                cmd.debug(f"{self.device.name} default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
+            elif args[0] == 'config':
+                print(f"BIG_TIMEOUT_DELAY = {CONFIG.BIG_TIMEOUT_DELAY}")
+            elif args[0] == 'alterconfig':
+                CONFIG.BIG_TIMEOUT_DELAY = 100500  # :D
+                print(f"CONFIG.BIG_TIMEOUT_DELAY changed to {CONFIG.BIG_TIMEOUT_DELAY}")
             else:
                 cmd.error(f"No such option defined: {args[0]}")
                 return
-            cmd.debug(f"{self.device.name} protocol default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
+
 
         print()
         cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
@@ -441,7 +451,7 @@ class App(Notifier):
                     if self.commRunning:
                         self.stopCommEvent.set()
                         self.commThread.join()
-                    cmd.error("Terminated :)")  # 'error' is just for visual standing out
+                    cmd.error("Terminating... :)")  # 'error' is just for visual standing out
                     import sys
                     sys.exit(0)
 
@@ -597,4 +607,5 @@ class App(Notifier):
 
 if __name__ == '__main__':
     Logger.LOGGERS["Device"].setLevel("INFO")
+    Logger.LOGGERS["Config"].setLevel("INFO")
     with App(): pass
