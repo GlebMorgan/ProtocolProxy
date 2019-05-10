@@ -28,6 +28,7 @@ class ConfigLoader:
     loader = YAML(typ='safe')
     loader.default_flow_style = False
     loaded = False
+    ignoreUpdates = False
 
     section: str = None  # initialized in successors
 
@@ -39,6 +40,7 @@ class ConfigLoader:
             raise NotImplementedError("ConfigLoader is intended to be used by subclassing")
 
         cls.section = section
+        CONFIG_CLASSES.add(cls)
 
         if cls._validateConfigFilePath_(path):
             cls.filePath = joinpath(path, cls.configFileName)
@@ -55,8 +57,6 @@ class ConfigLoader:
             log.warning(f"Cannot find section {cls.section} in config file. Creating new one with defaults.")
             cls._addCurrentSection_()
             return  # ◄ use class attrs when querying config params
-
-        CONFIG_CLASSES.add(cls)
 
         for parName in cls.params():
             currPar = getattr(cls, parName)
@@ -79,37 +79,48 @@ class ConfigLoader:
 
         cls.loaded = True
         log.info(f"Config '{cls.section}' loaded: "
-                  f"{formatDict({name: getattr(cls, name) for name in cls.params()})}")
+                 f"{formatDict({name: getattr(cls, name) for name in cls.params()})}")
 
     @classmethod
     def update(cls):  # CONSIDER: (True, 2, 3.0) == (1,2,3) as well as [1,2] != (1,2) => need to compare types as well
         assert CONFIGS_DICT
+        if cls.ignoreUpdates:
+            log.info(f"Section '{cls.section}': updates ignored by request")
+            return None
+
         storedConfig = tuple(CONFIGS_DICT[cls.section].values())
         CONFIGS_DICT[cls.section].update({name: getattr(cls, name) for name in cls.params()})
-        # ▼   stored config != current config
-        return storedConfig != tuple(CONFIGS_DICT[cls.section].values())
+        current_config = tuple(CONFIGS_DICT[cls.section].values())
+
+        return storedConfig != current_config
 
     @classmethod
-    def save(cls, forceSave=False):
+    def save(cls, forceSave=None):
         """ Save all config sections to config file if any have changed or if forced
             NOTE: Call this method before app exit """
 
-        # ▼ return here if no config file creation is required in case no valid one was found
+        # ▼ skip save on False when necessity of save is unknown (ex: CFG.save(CFG.update()) )
+        if forceSave is False: return
+
+        # ▼ add 'return' here if no config file creation is required in case no valid one was found
         if not CONFIG_CLASSES: log.warning("No informative config file found")
-        # if any(config.section in CONFIGS_DICT for config in CONFIG_CLASSES): forceSave = True
-        if not cls._fileUpdateRequired_() and not forceSave:
-            configChanged = tuple(cls.update() for cls in CONFIG_CLASSES)
-            if not any(configChanged):
-                log.info('Config does not change, no need to save')
-                return
+
+        if not forceSave:
+            # Not forced to save => update config dict with new config; disrupt save to file if no changes took place
+            configChanged = (cls.update() for cls in CONFIG_CLASSES)
+            # ▼ the iteration order on the SET is consistent within single execution run, so results will be aligned
+            updatedConfigSections = tuple(configCls.section for configCls in compress(CONFIG_CLASSES, configChanged))
+            newSections = cls._fileUpdateSections_()
+            if updatedConfigSections or newSections:
+                log.debug(f"Config updated for sections: {', '.join(set(updatedConfigSections + newSections))}")
             else:
-                # ▼ the iteration order on the SET is consistent within single execution run, so results will be aligned
-                log.debug("Config changed for: "
-                          f"{', '.join(configCls.section for configCls in compress(CONFIG_CLASSES, configChanged))}")
+                log.info("Config does not change, no need to save")
+                return
+
         try:
             with open(cls.filePath, 'w') as configFile:
                 cls.loader.dump(CONFIGS_DICT, configFile)
-                log.info(f"Config saved, {len(CONFIGS_DICT)} sections: {' ,'.join(CONFIGS_DICT)}")
+                log.info(f"Config saved, {len(CONFIGS_DICT)} sections")
         except (PermissionError, YAMLError) as e:
             log.error(f"Failed to save configuration file:{linesep}{e}")
 
@@ -125,7 +136,6 @@ class ConfigLoader:
 
         # CONSIDER: restore previous config (create .bak file) option
         #  and add functionality to revert() config from that backup
-
 
         try:
             with open(cls.filePath) as configFile:
@@ -148,20 +158,14 @@ class ConfigLoader:
             cls._addCurrentSection_()
 
     @classmethod
-    def ignoreChanges(cls, ignore=True):
-        return NotImplementedError  #FIXME: redesign not to touch CONFIG_CLASSES, mb create dedicated flags tuple
-        if ignore is True:
-            CONFIG_CLASSES.remove(cls)
-        elif ignore is False:
-            CONFIG_CLASSES.add(cls)
-        else: raise ValueError(f"Boolean value expected, not {ignore}")
-
-    @classmethod
     def params(cls):
         yield from (attrName for attrName in vars(cls) if attrName.isupper())
 
     @classmethod
-    def _fileUpdateRequired_(cls): return not all(configClass.loaded for configClass in CONFIG_CLASSES)
+    def _fileUpdateRequired_(cls): return any(not configClass.loaded for configClass in CONFIG_CLASSES)
+
+    @classmethod
+    def _fileUpdateSections_(cls): return tuple(cfgCls.section for cfgCls in CONFIG_CLASSES if not cfgCls.loaded)
 
     @staticmethod
     def _validateConfigFilePath_(path: str):

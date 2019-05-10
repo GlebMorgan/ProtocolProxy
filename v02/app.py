@@ -19,8 +19,6 @@ log = Logger("App")
 tlog = Logger("Transactions")
 
 
-# FIXME: s —> n —> n —> outputs: Failed to send data over Serial: COM11 (native communication soft disconnected?) - why?
-
 class ApplicationError(RuntimeError):
     """ ProtocolProxy application-level error """
     __slots__ = ()
@@ -269,9 +267,6 @@ class App(Notifier):
                 tlog.info(f"{self.devInt.token}: {self.devInt.in_waiting} bytes flushed.")
 
     def commLoop(self, stopEvent):
-        # TODO: introduce condition objects that will contain state of communication for native control soft and device
-        #      Output transactions on demand; initially show state changes only (as well as errors/warnings)
-        #      State objects are defined in app, but stored in serial objects
         try:
             with self.appInt, self.devInt:
                 try:
@@ -302,7 +297,8 @@ class App(Notifier):
 
                             self.deviceData = self.device.unwrap(self.deviceData)
                             try:
-                                if self.interactWithNativeSoft: self.device.sendNative(self.appInt, self.deviceData)
+                                if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
+                                    self.device.sendNative(self.appInt, self.deviceData)
                             except SerialWriteTimeoutError:
                                 if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
                                     if self.appInt.nTimeouts < 2:
@@ -486,7 +482,7 @@ class App(Notifier):
                     elif elem in ('par', 'params'):
                         cmd.info(self.device.params)
                     elif elem in ('conf', 'config'):
-                        for par in CONFIG.__dict__:  # FIXME: will not work with new config — redesign
+                        for par in CONFIG.params():
                             if par == par.strip('__'):
                                 cmd.info(f"{par} = {getattr(CONFIG, par)}")
                     elif elem in ('this', 'self', 'app', 'state'):
