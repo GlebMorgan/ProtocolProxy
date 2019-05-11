@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import compress
 from os import linesep
 from os.path import join as joinpath, dirname, abspath, isdir
+from shutil import copyfile
 from typing import Dict, Type, Set
 
 from logger import Logger
@@ -21,20 +22,21 @@ class ConfigLoader:
         class attrs as dict of categories with config parameters
         and saves/loads them to/from .yaml file """
 
-    # CONSIDER: override setattr() to set ConfigLoader attrs (like .filePath and .loader), not child class
+    # CONSIDER: Constrain assigning common settings to ConfigLoader attrs (like .filePath and .loader), not child class
 
     configFileName: str = 'config.yaml'
     filePath: str = joinpath(dirname(abspath(__file__)), configFileName)
     loader = YAML(typ='safe')
     loader.default_flow_style = False
+
+    # initialized by successors:
     loaded = False
     ignoreUpdates = False
-
-    section: str = None  # initialized in successors
+    section: str = None
 
     @classmethod
     def load(cls, section: str, path: str = None):
-        """ Update config object with retrieved config file params """
+        """ Update class with config params retrieved from config file, if possible """
 
         if cls is ConfigLoader:
             raise NotImplementedError("ConfigLoader is intended to be used by subclassing")
@@ -78,11 +80,15 @@ class ConfigLoader:
             for par in configFileDict: del currSectionDict[par]
 
         cls.loaded = True
-        log.info(f"Config '{cls.section}' loaded: "
-                 f"{formatDict({name: getattr(cls, name) for name in cls.params()})}")
+        log.info(f"Config '{cls.section}' loaded, {len(tuple(cls.params()))} items")
+        log.debug(f"Config {cls.section}: {formatDict({name: getattr(cls, name) for name in cls.params()})}")
 
     @classmethod
     def update(cls):  # CONSIDER: (True, 2, 3.0) == (1,2,3) as well as [1,2] != (1,2) => need to compare types as well
+        """ Update internal config storage with actual class attrs (if .ignoreUpdates is False)
+            Returns True if actual config has been changed, False otherwise, None if configured to ignore updates
+            May be used to save current class config only: CFG.save(CFG.update()) """
+
         assert CONFIGS_DICT
         if cls.ignoreUpdates:
             log.info(f"Section '{cls.section}': updates ignored by request")
@@ -114,39 +120,53 @@ class ConfigLoader:
             if updatedConfigSections or newSections:
                 log.debug(f"Config updated for sections: {', '.join(set(updatedConfigSections + newSections))}")
             else:
-                log.info("Config does not change, no need to save")
+                log.info("Config does not change, save skipped")
                 return
+
+        try:
+            copyfile(cls.filePath, cls.filePath + '.bak')
+        except OSError as e:
+            log.error(f"Failed to create backup config file: {e}")
 
         try:
             with open(cls.filePath, 'w') as configFile:
                 cls.loader.dump(CONFIGS_DICT, configFile)
                 log.info(f"Config saved, {len(CONFIGS_DICT)} sections")
-        except (PermissionError, YAMLError) as e:
+        except (OSError, YAMLError) as e:
             log.error(f"Failed to save configuration file:{linesep}{e}")
 
     @classmethod
-    def _addCurrentSection_(cls):
-        CONFIGS_DICT[cls.section] = {parName: getattr(cls, parName) for parName in cls.params()}
-        log.debug(f"New section added: {cls.section} {formatDict(CONFIGS_DICT[cls.section])}")
+    def revert(cls):
+        """ Restore config file from backup, if such is present """
+
+        try: copyfile(cls.filePath + '.bak', cls.filePath)
+        except OSError as e:
+            log.error(f"Reverting from backup failed: {e}")
+            return False
+        else:
+            log.info("Reverted from backup")
+            return True
+
+    @classmethod
+    def params(cls):
+        """ Iterate through all class attr names that are treated as config params """
+        yield from (attrName for attrName in vars(cls) if attrName.isupper())
 
     @classmethod
     def _loadFromFile_(cls) -> bool:
         """ Load dict of config sections from .yaml file to CONFIGS_DICT module variable,
             return boolean value = failed/succeeded """
 
-        # CONSIDER: restore previous config (create .bak file) option
-        #  and add functionality to revert() config from that backup
-
         try:
             with open(cls.filePath) as configFile:
                 # ▼ expect dict of config dicts in config file
                 configDict = cls.loader.load(configFile)
+                assert isinstance(configDict, dict), (f"Config loader {cls.loader.__name__} "
+                                                      f"returned invalid result type: {type(configDict)}")
                 if configDict is None:
                     log.warning(f"Config file is empty")
                     cls._addCurrentSection_()
-                elif not isinstance(configDict, dict):
-                    raise TypeError(f"Config loader {cls.loader.__name__} "
-                                    f"returned invalid result type: {type(configDict)}")
+                    return False
                 else:
                     log.debug(f"CONFIGS DICT: {formatDict(configDict)}")
                     CONFIGS_DICT.update(configDict)
@@ -154,12 +174,19 @@ class ConfigLoader:
         except YAMLError as e:
             log.error(f"Failed to parse configuration file:{linesep}{e}")
         except FileNotFoundError:
-            log.warning(f"Config file {cls.configFileName} not found. Defaults will be used")
+            log.warning(f"Config file {cls.configFileName} not found")
+
+        if (cls.revert()):
+            return cls._loadFromFile_()
+        else:
+            log.info("Using default config")
             cls._addCurrentSection_()
+            return False
 
     @classmethod
-    def params(cls):
-        yield from (attrName for attrName in vars(cls) if attrName.isupper())
+    def _addCurrentSection_(cls):
+        CONFIGS_DICT[cls.section] = {parName: getattr(cls, parName) for parName in cls.params()}
+        log.debug(f"New section added: {cls.section} {formatDict(CONFIGS_DICT[cls.section])}")
 
     @classmethod
     def _fileUpdateRequired_(cls): return any(not configClass.loaded for configClass in CONFIG_CLASSES)

@@ -121,7 +121,6 @@ class App(Notifier):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.commThread: self.commThread.join()
         CONFIG.save()
-        # TODO: CONFIG.saveConfigFile()
 
     def init(self):
         log.debug(f"Launched from:      {abspath(__file__)}")
@@ -371,6 +370,8 @@ class App(Notifier):
             'e': ("e", "exit app"),
             'd': ("d <parameter_shortcut> [new_value]", "show/set device parameter"),
             'log': ("log [<logger_name>, <new_level>]", "set logging level to specified logger"),
+            '>': ("> <executable_python_expression>", "execute arbitrary Python statement "
+                                                      "(use 'self' to access application attrs)"),
         }
 
         def showHelp(parameter=None):
@@ -416,6 +417,9 @@ class App(Notifier):
             elif args[0] == 'alterconfig':
                 CONFIG.BIG_TIMEOUT_DELAY = 100500  # :D
                 print(f"CONFIG.BIG_TIMEOUT_DELAY changed to {CONFIG.BIG_TIMEOUT_DELAY}")
+            elif args[0] == 'revertconfig':
+                CONFIG.revert()
+                print("CONFIG.revert() called")
             else:
                 cmd.error(f"No such option defined: {args[0]}")
                 return
@@ -506,6 +510,10 @@ class App(Notifier):
                         self.loggerLevels[loggerName] = newLevelName
                         Logger.LOGGERS[loggerName].setLevel(newLevelName)
                     else: raise CommandError(f"Wrong parameters")
+
+                elif command == '>':
+                    try: print(exec(userinput[2:]))
+                    except Exception as e: cmd.error(f"Execution error: {e}")
 
                 elif not self.device and command != 'p':
                     raise CommandError("Target device is not defined. Define with 'p <deviceName>'")
