@@ -1,8 +1,7 @@
 from typing import Callable
+from logger import Logger
 
-import utils
-
-log = utils.getLogger(__name__)
+log = Logger(__name__)
 
 
 class Notifier:

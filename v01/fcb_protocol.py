@@ -6,12 +6,13 @@ from typing import NamedTuple
 import utils
 from bits import bitsarray, flags
 from colored_logger import ColorHandler
+from logger import Logger
 from utils import bytewise
 
 from protocol import Protocol, Par
 from serial_transceiver import SerialError
 
-log = utils.getLogger(__name__)
+log = Logger(__name__)
 
 
 class SONY(Protocol):

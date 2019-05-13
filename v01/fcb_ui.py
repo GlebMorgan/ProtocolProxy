@@ -1,10 +1,11 @@
 import utils
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton
+from logger import Logger
 
 from fcb_protocol import SONY
 from protocol import Protocol
 
-log = utils.getLogger(__name__)
+log = Logger(__name__)
 
 
 class SonyUI(QWidget):

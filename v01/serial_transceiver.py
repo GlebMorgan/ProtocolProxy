@@ -7,9 +7,10 @@ import serial
 import utils
 from checksums import rfc1071
 from colored_logger import ColorHandler
+from logger import Logger
 from utils import bytewise
 
-log = utils.getLogger(__name__)
+log = Logger(__name__)
 
 # —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 

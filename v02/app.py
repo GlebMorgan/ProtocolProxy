@@ -1,9 +1,11 @@
 import importlib
 import threading
+import readline
 from contextlib import contextmanager
 from itertools import chain
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath, isdir
+from sys import exit
 from typing import Union
 
 from logger import Logger
@@ -116,21 +118,22 @@ class App(Notifier):
         self.deviceData: bytes = None
 
     def __enter__(self):
-        self.init()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.commThread: self.commThread.join()
+        if self.cmdThread: self.cmdThread.join()
         CONFIG.save()
 
     def init(self):
         log.debug(f"Launched from:      {abspath(__file__)}")
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
         log.info(f"Protocols directory: {joinpath(self.PROJECT_FOLDER, self.protocols.directory)}")
-
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
+
+    def startCmdThread(self):
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
-        self.cmdThread.join()
 
     @contextmanager
     def restartNeeded(self):
@@ -452,8 +455,8 @@ class App(Notifier):
                         self.stopCommEvent.set()
                         self.commThread.join()
                     cmd.error("Terminating... :)")  # 'error' is just for visual standing out
-                    import sys
-                    sys.exit(0)
+                    self.notify('quit')
+                    exit(0)
 
                 elif command in ('h', 'help'):
                     if len(params) == 1:
@@ -612,4 +615,4 @@ class App(Notifier):
 if __name__ == '__main__':
     Logger.LOGGERS["Device"].setLevel("INFO")
     Logger.LOGGERS["Config"].setLevel("INFO")
-    with App(): pass
+    with App() as app: app.init()

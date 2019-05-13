@@ -1,4 +1,4 @@
-from typing import MutableMapping
+from typing import MutableMapping, Callable
 
 
 class Notifier:
@@ -8,8 +8,15 @@ class Notifier:
         self.events: MutableMapping[str, list] = {}
 
     def notify(self, event: str, *args, **kwargs):
-        for handler in self.events[event]:
-            handler(*args, **kwargs)
+        try:
+            handlers = self.events[event]
+        except KeyError:
+            raise AssertionError(f"Notifier.notify() is called on non-existing event {event}")
+        for handler in handlers: handler(*args, **kwargs)
 
-    def addEvent(self, event: str):
-        self.events[event] = []
+    def addHandler(self, event: str, handler: Callable):
+        try:
+            self.events[event].append(handler)
+        except KeyError:
+            self.events[event] = []
+            self.addHandler(event, handler)

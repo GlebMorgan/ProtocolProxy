@@ -3,6 +3,7 @@ import sys
 
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QAction
+from PyQt5Utils import ActionButton
 from colored_logger import ColorHandler
 
 from fcb_ui import SonyUI
@@ -12,24 +13,6 @@ log = logging.getLogger(__name__ + ":main")
 log.setLevel(logging.DEBUG)
 log.addHandler(ColorHandler())
 log.disabled = False
-
-
-class ActionButton(QPushButton):
-
-    def __init__(self, *args, action):
-        super().__init__(*args)
-        self.actions = action
-        action.changed.connect(self.updateFromAction)
-        self.clicked.connect(action.trigger)
-
-    def updateFromAction(self):
-        self.setText(self.action.text())
-        self.setStatusTip(self.action.statusTip())
-        self.setToolTip(self.action.toolTip())
-        self.setIcon(self.action.icon())
-        self.setEnabled(self.action.isEnabled())
-        self.setCheckable(self.action.isCheckable())
-        self.setChecked(self.action.isChecked())
 
 
 class Actions:
@@ -52,19 +35,23 @@ class Actions:
         if shortcut: this.setShortcut(shortcut)
         this.triggered.connect(slot)
         log.debug(f"Action {name} created: {this}")
+
         return this
 
 
 class App(QApplication):
 
-    def __init__(self, sonyUi: QWidget, *args):
-        super().__init__(*args)
+    def __init__(self, sonyUi: QWidget, argv):
+        super().__init__(argv)
         self.window = self.setUiWindow()
-        self.sonyUiPanel = sonyUi
+        # self.sonyUiPanel = sonyUi
         self.actions = Actions()
 
         self.testButton = self.newButton('Test', self.actions.testAction, toggleable=True)
         self.testButton2 = self.newButton('Test2')
+        self.testButton2.clicked.connect(lambda: print("test2 clicked"))
+        self.testButton2.clicked.connect(lambda: self.actions.testAction.setToolTip("TEST"))
+        print(f"testAction.toolTip: {self.actions.testAction.toolTip()}")
         self.desk = self.setDesk()
 
     def setUiWindow(self):
@@ -87,7 +74,7 @@ class App(QApplication):
         buttonsLayout.addStretch(1)
 
         windowLayout.addLayout(buttonsLayout)
-        windowLayout.addWidget(self.sonyUiPanel)
+        # windowLayout.addWidget(self.sonyUiPanel)
         windowLayout.addStretch(1)
 
         this.setLayout(windowLayout)
@@ -112,5 +99,5 @@ class App(QApplication):
 
 
 if __name__ == '__main__':
-    app = App(sys.argv)
+    app = App(..., sys.argv)
     sys.exit(app.exec_())

@@ -37,8 +37,6 @@ class Par(Notifier):
         self.value: ParType = reqType()  # ◄ value requested by app
         self.status: reqType = None  # ◄ value obtained from device
 
-        self.addEvent('altered')
-        self.addEvent('updated')
         log.debug(f"Parameter created: {self}")
 
     @property
