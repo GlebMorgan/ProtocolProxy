@@ -11,7 +11,7 @@ class Notifier:
         try:
             handlers = self.events[event]
         except KeyError:
-            raise AssertionError(f"Notifier.notify() is called on non-existing event {event}")
+            raise AssertionError(f"Notifier.notify() is called on non-existing event '{event}'")
         for handler in handlers: handler(*args, **kwargs)
 
     def addHandler(self, event: str, handler: Callable):

@@ -46,7 +46,7 @@ class Par(Notifier):
     def ack(self, obtainedValue: ParType):
         if self.inSync:
             if self.value != obtainedValue:
-                raise DeviceError(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
+                log.warning(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
         else:
             if self.value == obtainedValue:
                 self.status = obtainedValue
@@ -79,7 +79,6 @@ class Prop(Notifier):
         self.alias = alias
         self.value: ParType = reqType()
 
-        self.addEvent('updated')
         log.debug(f"Property created: {self}")
 
     def __get__(self, instance, owner):

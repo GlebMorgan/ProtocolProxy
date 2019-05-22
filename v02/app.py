@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from itertools import chain
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath, isdir
-from sys import exit
+from sys import exit as sys_exit
 from typing import Union
 
 from logger import Logger
@@ -105,6 +105,8 @@ class App(Notifier):
             'App': 'DEBUG',
             'Transactions': 'DEBUG',
             'Packets': 'DEBUG',
+            'Device': 'INFO',
+            'Config': 'INFO',
         }
 
         self.device: Device = None  # while device is None, comm interfaces are not initialized
@@ -121,9 +123,14 @@ class App(Notifier):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.commThread: self.commThread.join()
-        if self.cmdThread: self.cmdThread.join()
+        if self.commThread:
+            if self.commRunning:
+                self.stopCommEvent.set()
+            self.commThread.join()
+        if self.cmdThread:
+            self.cmdThread.join()
         CONFIG.save()
+        print("TERMINATED :)")
 
     def init(self):
         log.debug(f"Launched from:      {abspath(__file__)}")
@@ -344,8 +351,8 @@ class App(Notifier):
             for loggerName, level in self.loggerLevels.items(): Logger.LOGGERS[loggerName].setLevel(level)
             return "————— Transactions logging output restored —————".center(80)
         elif mode is True or mode == 'True':  # set transactions-related loggers to lower level
+            for loggerName in self.loggerLevels: Logger.LOGGERS[loggerName].setLevel('ERROR')
             Logger.LOGGERS["Transactions"].setLevel('WARNING')
-            Logger.LOGGERS["Packets"].setLevel('ERROR')
             return "————— Transactions logging output suppressed —————".center(80)
         elif mode in Logger.LEVELS:  # set all loggers to given level
             for loggerName in self.loggerLevels: Logger.LOGGERS[loggerName].setLevel(mode)
@@ -389,7 +396,7 @@ class App(Notifier):
                 return linesep.join(lines)
             else:
                 if (parameter not in commandsHelp):
-                    raise CommandError(f"No such command '{command}'")
+                    raise CommandError(f"No such command '{parameter}'")
                 return " — ".join(commandsHelp[parameter])
 
         def formatDict(d: dict, spaces=4):
@@ -435,11 +442,11 @@ class App(Notifier):
         print()
         cmd.info(f"Available protocols: {', '.join(self.protocols)}")
 
-        command = ''
         while True:
             try:
                 prompt = '——► ' if self.commRunning else '——> '
                 userinput = input(prompt)
+
                 if (userinput.strip() == ''):
                     if self.commRunning:
                         if not self.suppressLoggers():
@@ -451,12 +458,9 @@ class App(Notifier):
                 command = params[0]
 
                 if (command == 'e'):
-                    if self.commRunning:
-                        self.stopCommEvent.set()
-                        self.commThread.join()
-                    cmd.error("Terminating... :)")  # 'error' is just for visual standing out
+                    cmd.error("Terminating...")  # 'error' is just for visual standing out
                     self.notify('quit')
-                    exit(0)
+                    sys_exit(0)
 
                 elif command in ('h', 'help'):
                     if len(params) == 1:
@@ -615,4 +619,6 @@ class App(Notifier):
 if __name__ == '__main__':
     Logger.LOGGERS["Device"].setLevel("INFO")
     Logger.LOGGERS["Config"].setLevel("INFO")
-    with App() as app: app.init()
+    with App() as app:
+        app.init()
+        app.startCmdThread()
