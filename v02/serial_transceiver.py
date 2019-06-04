@@ -217,7 +217,7 @@ class PelengTransceiver(SerialTransceiver):
             raise BadDataError(f"Bad packet (data too small, [{len(data)}] out of [{datalen + 2}])",
                                dataname="Packet", data=header + data)
         if (not self.CHECK_RFC or int.from_bytes(rfc1071(header + data), byteorder='big') == 0):
-            slog.debug(f"Reply packet [{len(header + data)}]: {bytewise(header + data)}")
+            slog.debug(f"Reply  [{len(header + data)}]: {bytewise(header + data)}")
             if (self.in_waiting != 0):
                 log.warning(f"Unread data ({self.in_waiting} bytes) is left in a serial datastream")
                 if (self.FLUSH_UNREAD_DATA):
