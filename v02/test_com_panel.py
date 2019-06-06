@@ -1,10 +1,8 @@
-import re
-from enum import Enum
-
 from PyQt5.QtCore import Qt, pyqtSignal, QRegExp, QTimer, QThread
+from PyQt5.QtGui import QPalette
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QAction
 from PyQt5Utils import ValidatingComboBox
-from PyQt5Utils.ActionComboBox import NotifyingValidator
+from PyQt5Utils.ActionComboBox import NotifyingValidator, Colorer
 from context_proxy import Context
 from serial.tools.list_ports import comports
 from utils import memoLastPosArgs, threaded, Dummy
@@ -35,6 +33,19 @@ class ComChooserValidator(NotifyingValidator):
         return newState, self.prefix + text, len(self.prefix) + pos
 
 
+class ComChooserColorer(Colorer):
+
+    def colorize(self):
+        role = QPalette.Text
+        text = self.target.currentText()
+        items = self.target.model().stringList()
+        if text not in items:
+            if any(item.startswith(text) for item in items):
+                return self.ColorSetting(role, Colorer.DisplayColor.Blue)
+            else: return self.ColorSetting(role, Colorer.DisplayColor.Red)
+        else: return self.ColorSetting(role, Colorer.DisplayColor.Green)
+
+
 class SerialCommPanel(QWidget):
 
     class ComPortUpdaterThread(QThread):
@@ -44,7 +55,7 @@ class SerialCommPanel(QWidget):
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.instance = self
+            self.__class__.instance = self
 
         def run(self):
             self.finished.emit(self.parent().getComPortsList())
@@ -74,7 +85,6 @@ class SerialCommPanel(QWidget):
         comPortUpdaterThread.start()
 
     def updateComChooserCombobox(self, portsList):
-
         if portsList == self.comChooserCombobox.model().stringList(): return
         with Context(self.comChooserCombobox) as cBox:
             currentText = cBox.currentText()
@@ -92,7 +102,7 @@ class SerialCommPanel(QWidget):
             cBox.blockSignals(False)
             cBox.setCurrentText(currentText)
             cBox.lineEdit().setSelection(*currentSelection)
-            cBox.blink(cBox.DisplayColor.Blue)
+            cBox.colorer.blink(cBox.colorer.DisplayColor.Blue)
 
     def setComChooser(self):
         changeComPortAction = QAction('SwapPort')
@@ -103,6 +113,7 @@ class SerialCommPanel(QWidget):
         this.setAction(changeComPortAction)
         this.setCompleter(None)
         this.setValidator(ComChooserValidator(this))
+        this.setColorer(ComChooserColorer(this))
         return this
 
     def initLayout(self):
