@@ -3,6 +3,8 @@
 
 # TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
+# TODO: disable animation
+
 from sys import argv, stdout, exit as sys_exit
 
 from PyQt5.QtCore import QSize, QStringListModel, pyqtSignal
@@ -97,12 +99,13 @@ class UI(QApplication):
         return this
 
     def test_setTestCombobox(self):
-        this = ValidatingComboBox(self.window)
+        this = ValidatingComboBox(parent=self.window)
         this.setAction(self.test_newAction("TestComboBox", self.testComboboxActionTriggered))
         this.setValidator(Test_ProtocolValidator(this))
         this.addItems((pName.upper() for pName in self.app.protocols if len(pName) < 8))
         this.addItems(('TK-275', 'SMTH'))
-
+        this.resize(this.sizeHint())
+        this.show()
         # CONSIDER: drop-down on hover
         return this
 
@@ -110,10 +113,8 @@ class UI(QApplication):
         print(self.sender().data())
 
     def test(self):
-        print(QValidator.Acceptable is 2, QValidator.Acceptable == 2)
-
-    def test_ComboBox(self, par='none'):
-        print(par)
+        # self.testCombobox.lineEdit().setSelection(3, -2)
+        self.testComPanel.comChooserCombobox.setCurrentText('COM13')
 
 
 class Test_ProtocolValidator(NotifyingValidator):
@@ -122,34 +123,27 @@ class Test_ProtocolValidator(NotifyingValidator):
         super().__init__(*args)
         self.target = target
         self.items = self.target.model().stringList
-        print(f"Protocols in ComboBox: {self.items()}")
 
-    @memoLastPosArgs
     def validate(self, text, pos):
+        text = text.upper().strip()
 
-        # FIXME: debug fully, fix error when 1st digit lost when replacing selected text
+        if any(char in text for char in r'<>:"/\|?*'): newState = self.Invalid
+        elif text.endswith('.'): newState = self.Intermediate
+        else: newState = self.Acceptable
 
-        # TODO: auto translate keyboard layout
+        # if text.strip() in self.items():
+        #     if self.target.lineEdit().hasSelectedText():
+        #         print("Wow, selectedtext is working!")
+        #         newState = self.Intermediate
+        #     else: newState = self.Acceptable
+        # elif any(protocolName.startswith(text.strip()) for protocolName in self.items()):
+        #     newState = self.Intermediate
+        # else:
+        #     newState = self.Invalid
+        #     self.target.lineEdit().setText(text)
+        #     self.target.lineEdit().setCursorPosition(pos)
 
-        # TODO: when invalid input is left in combobox on FocusOut:
-        #       save current input, paste current item into lineEdit, restore last input (saved, if exists) on FocusIn
-
-        # TODO: add placeholders with acceptable values description
-
-        text = text.upper()
-
-        if text.strip() in self.items():
-            if self.target.lineEdit().hasSelectedText():
-                print("Wow, selectedtext is working!")
-                newState = self.Intermediate
-            else: newState = self.Acceptable
-        elif any(protocolName.startswith(text.strip()) for protocolName in self.items()):
-            newState = self.Intermediate
-        else:
-            newState = self.Invalid
-            self.target.lineEdit().setText(text)
-            self.target.lineEdit().setCursorPosition(pos)
-
+        self.triggered.emit(newState)
         if self.state != newState:
             self.state = newState
             self.validationStateChanged.emit(newState)
