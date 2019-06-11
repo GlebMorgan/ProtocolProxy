@@ -42,9 +42,9 @@ class UI(QApplication):
 
     def setUiWindow(self):
         this = QMainWindow()
-        this.resize(800, 600)
+        this.resize(550, 400)
         # self.centerWindowOnScreen(this)
-        this.move(1050, 250)
+        this.move(1250, 250)
         this.setWindowTitle(f"ProtocolProxy - v{self.app.VERSION} © GlebMorgan")
         # this.setWindowIcon(QIcon("sampleIcon.jpg"))
         this.show()
@@ -72,8 +72,8 @@ class UI(QApplication):
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
     @staticmethod
-    def test_newAction(name, slot, shortcut=None):
-        this = QAction(name)  # parent=self.window?
+    def test_newAction(name, parent, slot, shortcut=None):
+        this = QAction(name, parent)
         if shortcut: this.setShortcut(shortcut)
         this.triggered.connect(slot)
         log.debug(f"Action {name} created: {this}")
@@ -84,8 +84,8 @@ class UI(QApplication):
         self.testButton1.move(50, 0)
         self.testButton2 = ActionButton("&Test2", self.window)
         self.testButton2.move(200, 0)
-        self.testCombobox = self.test_setTestCombobox()
-        self.testCombobox.move(300, 0)
+        # self.testCombobox = self.test_setTestCombobox()
+        # self.testCombobox.move(300, 0)
         self.testComPanel = self.test_setTestComPanel()
         self.testComPanel.move(400, 0)
 
@@ -100,17 +100,18 @@ class UI(QApplication):
 
     def test_setTestCombobox(self):
         this = ValidatingComboBox(parent=self.window)
-        this.setAction(self.test_newAction("TestComboBox", self.testComboboxActionTriggered))
+        this.setAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
         this.setValidator(Test_ProtocolValidator(this))
+        this.setColorer()
         this.addItems((pName.upper() for pName in self.app.protocols if len(pName) < 8))
         this.addItems(('TK-275', 'SMTH'))
         this.resize(this.sizeHint())
         this.show()
-        # CONSIDER: drop-down on hover
         return this
 
     def testComboboxActionTriggered(self):
         print(self.sender().data())
+        self.sender().parent().ack(True)
 
     def test(self):
         # self.testCombobox.lineEdit().setSelection(3, -2)

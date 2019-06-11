@@ -39,6 +39,8 @@ class ComChooserColorer(Colorer):
         role = QPalette.Text
         text = self.target.currentText()
         items = self.target.model().stringList()
+        if text == self.target.activeValue:
+            return self.ColorSetting(role, Colorer.DisplayColor.Black)
         if text not in items:
             if any(item.startswith(text) for item in items):
                 return self.ColorSetting(role, Colorer.DisplayColor.Blue)
@@ -80,6 +82,7 @@ class SerialCommPanel(QWidget):
 
     def updateComPorts(self):
         if self.ComPortUpdaterThread.instance.isRunning(): return
+        print("Updating ports!")
         comPortUpdaterThread = self.ComPortUpdaterThread(self)
         comPortUpdaterThread.finished.connect(lambda portsList: self.updateComChooserCombobox(portsList))
         comPortUpdaterThread.start()
@@ -92,24 +95,24 @@ class SerialCommPanel(QWidget):
                 cBox.lineEdit().selectionStart(),
                 len(cBox.lineEdit().selectedText()),
             )
+
             cBox.blockSignals(True)
             cBox.clear()
             cBox.addItems(portsList)
-            print(f"Idx before: {cBox.currentIndex()} "),
-            cBox.setCurrentIndex(
-                    cBox.findText(cBox.activeValue))
-            print(f"idx after: {cBox.currentIndex()}")
+            cBox.setCurrentIndex(cBox.findText(cBox.activeValue))
             cBox.blockSignals(False)
+
             cBox.setCurrentText(currentText)
             cBox.lineEdit().setSelection(*currentSelection)
             cBox.colorer.blink(cBox.colorer.DisplayColor.Blue)
 
     def setComChooser(self):
-        changeComPortAction = QAction('SwapPort')
+        this = ValidatingComboBox(parent=self, default='COM')
+        this.lastInput = this.activeValue
+        this.updateRequired.connect(self.updateComPorts)
+        changeComPortAction = QAction('SwapPort', this)
         changeComPortAction.triggered.connect(self.changeSerialPort)
         self.targetActions[changeComPortAction.text()] = changeComPortAction
-        this = ValidatingComboBox(parent=self)
-        this.updateRequired.connect(self.updateComPorts)  # FIXME UI hangs for a moment when system is updating config
         this.setAction(changeComPortAction)
         this.setCompleter(None)
         this.setValidator(ComChooserValidator(this))
@@ -123,9 +126,12 @@ class SerialCommPanel(QWidget):
         self.setLayout(layout)
 
     def changeSerialPort(self):
+        sender = self.sender()
         try:
             self.serialInt.close()
-            self.serialInt.port = self.comChooserCombobox.currentText()
+            self.serialInt.port = sender.data()
             self.serialInt.open()
-        except Exception as e: print(e)
-        else: self.comChooserCombobox.ack()
+        except Exception as e:
+            print(e)
+            sender.parent().ack(False)
+        else: sender.parent().ack(True)
