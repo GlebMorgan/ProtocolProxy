@@ -7,12 +7,12 @@
 
 from sys import argv, stdout, exit as sys_exit
 
-from PyQt5.QtCore import QSize, QStringListModel, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal
 from PyQt5.QtGui import QValidator, QFontMetrics
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction
 from PyQt5Utils import ActionButton, ValidatingComboBox
-from PyQt5Utils.ActionComboBox import NotifyingValidator
+from PyQt5Utils.NotifyingValidator import NotifyingValidator
 from logger import Logger
 from utils import memoLastPosArgs
 
@@ -84,8 +84,8 @@ class UI(QApplication):
         self.testButton1.move(50, 0)
         self.testButton2 = ActionButton("&Test2", self.window)
         self.testButton2.move(200, 0)
-        # self.testCombobox = self.test_setTestCombobox()
-        # self.testCombobox.move(300, 0)
+        self.testCombobox = self.test_setTestCombobox()
+        self.testCombobox.move(300, 0)
         self.testComPanel = self.test_setTestComPanel()
         self.testComPanel.move(400, 0)
 
@@ -115,7 +115,7 @@ class UI(QApplication):
 
     def test(self):
         # self.testCombobox.lineEdit().setSelection(3, -2)
-        self.testComPanel.comChooserCombobox.setCurrentText('COM13')
+        print(type(self.testComPanel.comChooserCombobox.view()))
 
 
 class Test_ProtocolValidator(NotifyingValidator):

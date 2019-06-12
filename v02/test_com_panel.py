@@ -1,8 +1,7 @@
 from PyQt5.QtCore import Qt, pyqtSignal, QRegExp, QTimer, QThread
 from PyQt5.QtGui import QPalette
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QAction
-from PyQt5Utils import ValidatingComboBox
-from PyQt5Utils.ActionComboBox import NotifyingValidator, Colorer
+from PyQt5Utils import ValidatingComboBox, NotifyingValidator, Colorer
 from context_proxy import Context
 from serial.tools.list_ports import comports
 from utils import memoLastPosArgs, threaded, Dummy
@@ -33,21 +32,6 @@ class ComChooserValidator(NotifyingValidator):
         return newState, self.prefix + text, len(self.prefix) + pos
 
 
-class ComChooserColorer(Colorer):
-
-    def colorize(self):
-        role = QPalette.Text
-        text = self.target.currentText()
-        items = self.target.model().stringList()
-        if text == self.target.activeValue:
-            return self.ColorSetting(role, Colorer.DisplayColor.Black)
-        if text not in items:
-            if any(item.startswith(text) for item in items):
-                return self.ColorSetting(role, Colorer.DisplayColor.Blue)
-            else: return self.ColorSetting(role, Colorer.DisplayColor.Red)
-        else: return self.ColorSetting(role, Colorer.DisplayColor.Green)
-
-
 class SerialCommPanel(QWidget):
 
     class ComPortUpdaterThread(QThread):
@@ -72,11 +56,10 @@ class SerialCommPanel(QWidget):
         self.show()
 
     def getComPortsList(self):
-        # FIXME: update ValidatingComboBox.lastInput when comports are updated
         newComPortsList = []
         for i, port in enumerate(comports()):
             newComPortsList.append(port.device)
-            self.comChooserCombobox.setItemData(i, port.description, Qt.ToolTipRole)  # FIXME
+            self.comChooserCombobox.setItemData(i, port.description, Qt.ToolTipRole)  # CONSIDER: does not work... :(
         print(f'COM ports updated: {len(newComPortsList)} items')
         return newComPortsList
 
@@ -103,11 +86,27 @@ class SerialCommPanel(QWidget):
             cBox.blockSignals(False)
 
             cBox.setCurrentText(currentText)
+            if cBox.view().hasFocus(): cBox.colorer.setColor(QPalette.Text, cBox.colorer.DisplayColor.Black)
             cBox.lineEdit().setSelection(*currentSelection)
+            # cBox.adjustSize()
+            cBox.view().adjustSize()  # CONSIDER: does not work... ;(
             cBox.colorer.blink(cBox.colorer.DisplayColor.Blue)
 
+    @staticmethod
+    def colorizeComChooser(colorer):
+        role = QPalette.Text
+        text = colorer.target.currentText()
+        items = colorer.target.model().stringList()
+        if text == colorer.target.activeValue:
+            return colorer.ColorSetting(role, Colorer.DisplayColor.Black)
+        if text not in items:
+            if any(item.startswith(text) for item in items):
+                return colorer.ColorSetting(role, Colorer.DisplayColor.Blue)
+            else: return colorer.ColorSetting(role, Colorer.DisplayColor.Red)
+        else: return colorer.ColorSetting(role, Colorer.DisplayColor.Green)
+
     def setComChooser(self):
-        this = ValidatingComboBox(parent=self, default='COM')
+        this = ValidatingComboBox(parent=self, default='COM', persistInput=ValidatingComboBox.PersistInputMode.Retain)
         this.lastInput = this.activeValue
         this.updateRequired.connect(self.updateComPorts)
         changeComPortAction = QAction('SwapPort', this)
@@ -116,7 +115,7 @@ class SerialCommPanel(QWidget):
         this.setAction(changeComPortAction)
         this.setCompleter(None)
         this.setValidator(ComChooserValidator(this))
-        this.setColorer(ComChooserColorer(this))
+        this.setColorer(Colorer(this, colorize=self.colorizeComChooser))
         return this
 
     def initLayout(self):
