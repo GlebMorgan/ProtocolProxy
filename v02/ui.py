@@ -7,12 +7,11 @@
 
 from sys import argv, stdout, exit as sys_exit
 
-from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal
-from PyQt5.QtGui import QValidator, QFontMetrics
+from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp
+from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
-    QComboBox, QAction
-from PyQt5Utils import ActionButton, ValidatingComboBox
-from PyQt5Utils.NotifyingValidator import NotifyingValidator
+    QComboBox, QAction, QLineEdit
+from PyQt5Utils import ActionButton, ValidatingComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
 from logger import Logger
 from utils import memoLastPosArgs
 
@@ -42,7 +41,7 @@ class UI(QApplication):
 
     def setUiWindow(self):
         this = QMainWindow()
-        this.resize(550, 400)
+        this.resize(650, 400)
         # self.centerWindowOnScreen(this)
         this.move(1250, 250)
         this.setWindowTitle(f"ProtocolProxy - v{self.app.VERSION} © GlebMorgan")
@@ -86,10 +85,42 @@ class UI(QApplication):
         self.testButton2.move(200, 0)
         self.testCombobox = self.test_setTestCombobox()
         self.testCombobox.move(300, 0)
+        self.testActionCombobox = self.test_setActionCombobox()
+        self.testActionCombobox.move(300, 100)
         self.testComPanel = self.test_setTestComPanel()
-        self.testComPanel.move(400, 0)
+        self.testComPanel.move(380, 0)
+        self.testInputMaskLineEdit = self.test_setInputMaskLineEdit()
+        self.testInputMaskLineEdit.move(500, 0)
+        self.testLineEdit = self.test_setLineEdit()
+        self.testLineEdit.move(100, 100)
 
         self.testButton2.clicked.connect(self.test)
+
+    def test_setInputMaskLineEdit(self):
+        this = QLineEdit(self.window)
+        this.setInputMask('0->A-0')
+        this.setText('8-N-1')
+        this.setValidator(QRegExpValidator(QRegExp('[6789]-[OEN]-[12]')))
+        this.resize(this.sizeHint())
+        this.setMaximumWidth(50)
+        this.show()
+        return this
+
+    def test_setLineEdit(self):
+        this = ActionLineEdit(self.window)
+        this.setAction(self.test_newAction("TestLineEdit", this, lambda: print("ActionLineEdit triggered")))
+        this.resize(this.sizeHint())
+        this.show()
+        return this
+
+    def test_setActionCombobox(self):
+        this = ActionComboBox(parent=self.window)
+        this.setAction(self.test_newAction("TestActionComboBox", this, lambda: print("ActionCombobox triggered")))
+        this.setValidator(Validator(this, validate=self.testComboboxValidate))
+        this.addItems(('1', '2', '3'))
+        this.resize(this.sizeHint())
+        # this.show()
+        return this
 
     def test_setTestComPanel(self):
         from serial_transceiver import PelengTransceiver
@@ -101,8 +132,8 @@ class UI(QApplication):
     def test_setTestCombobox(self):
         this = ValidatingComboBox(parent=self.window)
         this.setAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
-        this.setValidator(Test_ProtocolValidator(this))
-        this.setColorer()
+        this.setValidator(Validator(this, validate=self.testComboboxValidate))
+        this.setColorer(Colorer(this, colorize=self.testComboboxColorize))
         this.addItems((pName.upper() for pName in self.app.protocols if len(pName) < 8))
         this.addItems(('TK-275', 'SMTH'))
         this.resize(this.sizeHint())
@@ -113,44 +144,43 @@ class UI(QApplication):
         print(self.sender().data())
         self.sender().parent().ack(True)
 
-    def test(self):
-        # self.testCombobox.lineEdit().setSelection(3, -2)
-        print(type(self.testComPanel.comChooserCombobox.view()))
-
-
-class Test_ProtocolValidator(NotifyingValidator):
-
-    def __init__(self, target, *args):
-        super().__init__(*args)
-        self.target = target
-        self.items = self.target.model().stringList
-
-    def validate(self, text, pos):
+    @staticmethod
+    def testComboboxValidate(validator, text, pos):
         text = text.upper().strip()
 
-        if any(char in text for char in r'<>:"/\|?*'): newState = self.Invalid
-        elif text.endswith('.'): newState = self.Intermediate
-        else: newState = self.Acceptable
+        if any(char in text for char in r'<>:"/\|?*'): newState = validator.Invalid
+        elif text.endswith('.'): newState = validator.Intermediate
+        else: newState = validator.Acceptable
 
-        # if text.strip() in self.items():
-        #     if self.target.lineEdit().hasSelectedText():
-        #         print("Wow, selectedtext is working!")
-        #         newState = self.Intermediate
-        #     else: newState = self.Acceptable
-        # elif any(protocolName.startswith(text.strip()) for protocolName in self.items()):
-        #     newState = self.Intermediate
-        # else:
-        #     newState = self.Invalid
-        #     self.target.lineEdit().setText(text)
-        #     self.target.lineEdit().setCursorPosition(pos)
+        validator.triggered.emit(newState)
+        if validator.state != newState:
+            validator.state = newState
+            validator.validationStateChanged.emit(newState)
 
-        self.triggered.emit(newState)
-        if self.state != newState:
-            self.state = newState
-            self.validationStateChanged.emit(newState)
+        return validator.state, text, pos
 
-        return self.state, text, pos
+    @staticmethod
+    def testComboboxColorize(colorer):
+        role = QPalette.Text
+        text = colorer.target.currentText()
+        items = colorer.target.model().stringList()
+        if text == colorer.target.activeValue:
+            return colorer.ColorSetting(role, Colorer.DisplayColor.Black)
+        if text not in items:
+            if any(item.startswith(text) for item in items):
+                return colorer.ColorSetting(role, Colorer.DisplayColor.Blue)
+            else: return colorer.ColorSetting(role, Colorer.DisplayColor.Red)
+        else: return colorer.ColorSetting(role, Colorer.DisplayColor.Green)
 
+    @staticmethod
+    def testLineEditValidate(validator):
+        ...
+
+
+    def test(self):
+        ...
+        # self.testCombobox.lineEdit().setSelection(3, -2)
+        # print(type(self.testComPanel.comChooserCombobox.view()))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, pyqtSignal, QRegExp, QTimer, QThread
-from PyQt5.QtGui import QPalette
+from PyQt5.QtGui import QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QAction
 from PyQt5Utils import ValidatingComboBox, NotifyingValidator, Colorer
 from context_proxy import Context
@@ -9,7 +9,7 @@ from utils import memoLastPosArgs, threaded, Dummy
 from serial_transceiver import SerialError
 
 
-class ComChooserValidator(NotifyingValidator):
+class ComChooserValidator(QRegExpValidator, NotifyingValidator):
 
     def __init__(self, *args):
         self.prefix = 'COM'
@@ -55,6 +55,25 @@ class SerialCommPanel(QWidget):
         self.initLayout()
         self.show()
 
+    def initLayout(self):
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0,0,0,0)
+        layout.addWidget(self.comChooserCombobox)
+        self.setLayout(layout)
+
+    def setComChooser(self):
+        this = ValidatingComboBox(parent=self, default='COM', persistInput=ValidatingComboBox.InputMode.Retain)
+        this.lastInput = this.activeValue
+        this.updateRequired.connect(self.updateComPorts)
+        changeComPortAction = QAction('SwapPort', this)
+        changeComPortAction.triggered.connect(self.changeSerialPort)
+        self.targetActions[changeComPortAction.text()] = changeComPortAction
+        this.setAction(changeComPortAction)
+        this.setCompleter(None)
+        this.setValidator(ComChooserValidator(this))
+        this.setColorer(Colorer(this, colorize=self.comChooserColorize))
+        return this
+
     def getComPortsList(self):
         newComPortsList = []
         for i, port in enumerate(comports()):
@@ -93,7 +112,7 @@ class SerialCommPanel(QWidget):
             cBox.colorer.blink(cBox.colorer.DisplayColor.Blue)
 
     @staticmethod
-    def colorizeComChooser(colorer):
+    def comChooserColorize(colorer):
         role = QPalette.Text
         text = colorer.target.currentText()
         items = colorer.target.model().stringList()
@@ -104,25 +123,6 @@ class SerialCommPanel(QWidget):
                 return colorer.ColorSetting(role, Colorer.DisplayColor.Blue)
             else: return colorer.ColorSetting(role, Colorer.DisplayColor.Red)
         else: return colorer.ColorSetting(role, Colorer.DisplayColor.Green)
-
-    def setComChooser(self):
-        this = ValidatingComboBox(parent=self, default='COM', persistInput=ValidatingComboBox.PersistInputMode.Retain)
-        this.lastInput = this.activeValue
-        this.updateRequired.connect(self.updateComPorts)
-        changeComPortAction = QAction('SwapPort', this)
-        changeComPortAction.triggered.connect(self.changeSerialPort)
-        self.targetActions[changeComPortAction.text()] = changeComPortAction
-        this.setAction(changeComPortAction)
-        this.setCompleter(None)
-        this.setValidator(ComChooserValidator(this))
-        this.setColorer(Colorer(this, colorize=self.colorizeComChooser))
-        return this
-
-    def initLayout(self):
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0,0,0,0)
-        layout.addWidget(self.comChooserCombobox)
-        self.setLayout(layout)
 
     def changeSerialPort(self):
         sender = self.sender()
