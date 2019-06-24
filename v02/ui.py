@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp
 from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction, QLineEdit
-from PyQt5Utils import ActionButton, ValidatingComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
+from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
 from logger import Logger
 from utils import memoLastPosArgs
 
@@ -79,9 +79,9 @@ class UI(QApplication):
         return this
 
     def test_addWidgets(self):
-        self.testButton1 = ActionButton("ActionButtonTest", self.window)
+        self.testButton1 = ActionButton("ActionButtonTest", parent=self.window, resize=True, show=True)
         self.testButton1.move(50, 0)
-        self.testButton2 = ActionButton("&Test2", self.window)
+        self.testButton2 = ActionButton("&Test2", parent=self.window, resize=True, show=True)
         self.testButton2.move(200, 0)
         self.testCombobox = self.test_setTestCombobox()
         self.testCombobox.move(300, 0)
@@ -97,6 +97,7 @@ class UI(QApplication):
         self.testButton2.clicked.connect(self.test)
 
     def test_setInputMaskLineEdit(self):
+
         this = QLineEdit(self.window)
         this.setInputMask('0->A-0')
         this.setText('8-N-1')
@@ -107,14 +108,14 @@ class UI(QApplication):
         return this
 
     def test_setLineEdit(self):
-        this = ActionLineEdit(self.window)
+        this = ActionLineEdit(parent=self.window)
         this.setAction(self.test_newAction("TestLineEdit", this, lambda: print("ActionLineEdit triggered")))
         this.resize(this.sizeHint())
         this.show()
         return this
 
     def test_setActionCombobox(self):
-        this = ActionComboBox(parent=self.window)
+        this = ActionComboBox(parent=self.window, resize=True, show=True)  # NOTE: kwargs break super()!
         this.setAction(self.test_newAction("TestActionComboBox", this, lambda: print("ActionCombobox triggered")))
         this.setValidator(Validator(this, validate=self.testComboboxValidate))
         this.addItems(('1', '2', '3'))
@@ -130,7 +131,7 @@ class UI(QApplication):
         return this
 
     def test_setTestCombobox(self):
-        this = ValidatingComboBox(parent=self.window)
+        this = ColoredComboBox(parent=self.window)
         this.setAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
         this.setValidator(Validator(this, validate=self.testComboboxValidate))
         this.setColorer(Colorer(this, colorize=self.testComboboxColorize))
@@ -141,7 +142,7 @@ class UI(QApplication):
         return this
 
     def testComboboxActionTriggered(self):
-        print(self.sender().data())
+        log.info(f"{self.sender().text()}: new value → {self.sender().data()}")
         self.sender().parent().ack(True)
 
     @staticmethod
@@ -179,6 +180,11 @@ class UI(QApplication):
 
     def test(self):
         ...
+        from PyQt5.QtGui import QColor
+        color = QColor("aqua")
+        palette = self.testLineEdit.palette()
+        palette.setColor(QPalette.Base, color)
+        self.testLineEdit.setPalette(palette)
         # self.testCombobox.lineEdit().setSelection(3, -2)
         # print(type(self.testComPanel.comChooserCombobox.view()))
 

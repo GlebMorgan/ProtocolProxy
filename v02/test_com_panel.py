@@ -1,12 +1,14 @@
 from PyQt5.QtCore import Qt, pyqtSignal, QRegExp, QTimer, QThread
 from PyQt5.QtGui import QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QAction
-from PyQt5Utils import ValidatingComboBox, NotifyingValidator, Colorer
+from PyQt5Utils import ColoredComboBox, NotifyingValidator, Colorer
 from context_proxy import Context
+from logger import Logger
 from serial.tools.list_ports import comports
 from utils import memoLastPosArgs, threaded, Dummy
 
-from serial_transceiver import SerialError
+
+log = Logger("ComPanel")
 
 
 class ComChooserValidator(QRegExpValidator, NotifyingValidator):
@@ -62,7 +64,7 @@ class SerialCommPanel(QWidget):
         self.setLayout(layout)
 
     def setComChooser(self):
-        this = ValidatingComboBox(parent=self, default='COM', persistInput=ValidatingComboBox.InputMode.Retain)
+        this = ColoredComboBox(parent=self, default='COM', persistInput=ColoredComboBox.InputMode.Retain)
         this.lastInput = this.activeValue
         this.updateRequired.connect(self.updateComPorts)
         changeComPortAction = QAction('SwapPort', this)
@@ -79,12 +81,11 @@ class SerialCommPanel(QWidget):
         for i, port in enumerate(comports()):
             newComPortsList.append(port.device)
             self.comChooserCombobox.setItemData(i, port.description, Qt.ToolTipRole)  # CONSIDER: does not work... :(
-        print(f'COM ports updated: {len(newComPortsList)} items')
+        log.info(f'COM ports updated: {len(newComPortsList)} items')
         return newComPortsList
 
     def updateComPorts(self):
         if self.ComPortUpdaterThread.instance.isRunning(): return
-        print("Updating ports!")
         comPortUpdaterThread = self.ComPortUpdaterThread(self)
         comPortUpdaterThread.finished.connect(lambda portsList: self.updateComChooserCombobox(portsList))
         comPortUpdaterThread.start()
