@@ -1,3 +1,5 @@
+from __future__ import annotations as annotations_feature
+
 from functools import partial
 import sys
 from threading import Thread
@@ -5,7 +7,7 @@ from time import sleep
 from typing import Union, Callable
 
 from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot
-from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie
+from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
     QToolButton, QSizePolicy, QLineEdit
 
@@ -113,9 +115,9 @@ class SymbolLineEdit(QLineEdit):
 
 
 class ComPortUpdater(QObject):
-    finished = pyqtSignal()
+    done = pyqtSignal()
 
-    def __init__(self, comPanel, *args):
+    def __init__(self, comPanel: SerialCommPanel, *args):
         super().__init__(*args)
         self.target: SerialCommPanel = comPanel
 
@@ -128,21 +130,34 @@ class ComPortUpdater(QObject):
         log.debug(f"New COM ports list: {newComPortsList} ({len(newComPortsList)} items)")
         return newComPortsList
 
-    def updateComPorts(self):
+    def run(self):
         log.debug(f"Updating COM ports...")
         ports = self.getComPortsList()
         if ports != self.combobox.model().stringList():
             self.combobox.clear()
             self.combobox.addItems(ports)
-        log.info(f"COM ports updated")
+        log.info(f"COM ports updated: {', '.join('COM' + str(port) for port in ports)}")
 
     def blockingTest(self):
         print(f"Updater thread ID: {int(QThread.currentThreadId())}")
-        # QApplication.instance().processEvents()
+        QApplication.instance().processEvents()
         for i in range(4):
-            print(f"Iteration {i}")
+            print(f"Com updater - iteration {i}")
             sleep(0.5)
-        self.finished.emit()
+        self.done.emit()
+
+
+class QWorkerThread(QThread):
+    done = pyqtSignal(object)
+
+    def __init__(self, *args, name=None, target):
+        super().__init__(*args)
+        self.function = target
+        if name is not None: self.setObjectName(name)
+
+    def run(self):
+        log.debug(f"Test thread ID: {int(QThread.currentThreadId())}")
+        self.done.emit(self.function())
 
 
 class SerialCommPanel(QWidget):
@@ -152,7 +167,7 @@ class SerialCommPanel(QWidget):
         self.serialInt = devInt
         self.actionList = super().actions
         self.actions = WidgetActions(self)
-        self.comUpdater = ComPortUpdater(self)
+        self.comUpdaterThread = None
         self.setupActions()
 
         self.startButton = self.newStartButton()
@@ -170,7 +185,7 @@ class SerialCommPanel(QWidget):
         self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
         self.setStyleSheet('background-color: rgb(200, 255, 200)')
 
-        self.updateComPorts()
+        self.updateComPortsAsync()
 
     def initLayout(self):
         spacing = self.font().pointSize()
@@ -234,11 +249,12 @@ class SerialCommPanel(QWidget):
         changeComPortAction.triggered.connect(self.changeSerialPort)  # TODO
         self.addAction(changeComPortAction)
         this.setValidator(None)  # TODO
+        this.setItemData(0, 'azaza', Qt.ToolTipRole)  # CONSIDER: doesn't work inside App(), works when adding itemData to stand-alone widget
         return this
 
     def newRefreshPortsButton(self):
         this = SqButton(self)  # TODO: reload image and animation here
-        this.clicked.connect(self.updateComPorts)
+        this.clicked.connect(self.updateComPortsAsync)
         this.setIcon(QIcon(r"D:\GLEB\Python\refresh-gif-2.gif"))
         this.setIconSize(this.sizeHint() - QSize(10,10))
         this.anim = QMovie(r"D:\GLEB\Python\refresh-gif-2.gif")
@@ -276,17 +292,41 @@ class SerialCommPanel(QWidget):
             newComPortsList.append(port.device.strip('COM'))
             self.comCombobox.setItemData(i, port.description, Qt.ToolTipRole)  # CONSIDER: does not work... :(
         log.debug(f"New COM ports list: {newComPortsList} ({len(newComPortsList)} items)")
+        # CONSIDER: adjust combobox drop-down size when update is performed with unfolded ports list
         return newComPortsList
 
     def updateComPorts(self):
-        log.debug(f"Updating COM ports...")
+        log.debug(f"Updating com ports...")
         self.refreshPortsButton.anim.start()
         ports = self.getComPortsList()
         if ports != self.comCombobox.model().stringList():
             self.comCombobox.clear()
             self.comCombobox.addItems(ports)
-        self.refreshPortsButton.anim.stop()  # TODO: needs new thread
-        log.info(f"COM ports updated")
+        self.refreshPortsButton.anim.stop()
+        log.debug(f"Com ports updated")
+
+    def updateComPortsAsync(self):
+        if self.comUpdaterThread is not None:
+            log.debug("Update is already running - cancelled")
+            return
+        log.debug(f"Updating COM ports...")
+        thread = QWorkerThread(self, name="Com ports refresh", target=self.getComPortsList)
+        thread.done.connect(self.updateComCombobox)
+        thread.started.connect(self.refreshPortsButton.anim.start)
+        thread.finished.connect(self.refreshPortsButton.anim.stop)
+        thread.finished.connect(partial(self.refreshPortsButton.anim.jumpToFrame, 0))
+        thread.finished.connect(partial(setattr, self, 'comUpdaterThread', None))
+        thread.finished.connect(partial(log.debug, f"Updating com ports: DONE"))
+        self.comUpdaterThread = thread
+        log.debug(f"Main thread ID: {int(QThread.currentThreadId())}")
+        thread.start()
+
+    def updateComCombobox(self, ports):
+        if ports != self.comCombobox.model().stringList():
+            self.comCombobox.clear()
+            self.comCombobox.addItems(ports)
+            # TODO: insert tooltips with port description
+        log.info(f"COM ports refreshed: {', '.join('COM' + str(port) for port in ports)}")
 
     def changeSerialPort(self):
         sender = self.sender()
@@ -301,28 +341,28 @@ class SerialCommPanel(QWidget):
 
     def testSlot(self, par=None):
         print(f"test: {par}")
+        print(self.comCombobox.itemData(1, Qt.BackgroundRole))
+        self.comCombobox.setItemData(1, QColor(Qt.red), Qt.BackgroundRole)
+        print(self.comCombobox.itemData(1, Qt.BackgroundRole))
+
+    def testCustomQThread(self):
         class TestThread(QThread):
-            done = pyqtSignal()
+            done = pyqtSignal(object)
             def __init__(self, *args, name=None, target):
                 super().__init__(*args)
                 self.function = target
                 if name is not None:
                     self.setObjectName(name)
-            # def __del__(self):
-            #     self.quit()
-            #     self.wait()
             def run(self):
                 print(f"Test thread ID: {int(QThread.currentThreadId())}")
-                self.function()
-                self.done.emit()
-        th = TestThread(name="TestThread", target=self.blockingTest)
-        th.started.connect(lambda: print("Th started"))
-        th.finished.connect(lambda: print("Thread finished"))
-        th.done.connect(lambda: print("Done signal emitted"))
+                self.done.emit(self.function())
+        th = TestThread(name="Test_CustomQThread", target=self.blockingTest)
+        th.started.connect(lambda: print("Custom QThread started"))
+        th.finished.connect(lambda: print("Custom QThread finished"))
+        th.done.connect(lambda value: print(f"Custom QThread: done signal emitted: {value}"))
         print(f"Main thread ID: {int(QThread.currentThreadId())}")
         th.start()
-        self.th = th
-
+        self.comUpdaterThread = th
 
     def testPythonThreads(self):
         comUpdateThread = Thread(name="TestUpdateComs", target=self.blockingTest)
@@ -332,12 +372,13 @@ class SerialCommPanel(QWidget):
         comUpdaterThread = QThread(self)
         comUpdaterThread.setObjectName('ComUpdaterThread')
         self.comUpdater.moveToThread(comUpdaterThread)
-        comUpdaterThread.started.connect(self.comUpdater.blockingTest)
-        self.comUpdater.finished.connect(comUpdaterThread.quit)
         comUpdaterThread.started.connect(lambda: print("Thread started"))
+        comUpdaterThread.started.connect(self.comUpdater.blockingTest)
+        self.comUpdater.done.connect(comUpdaterThread.quit)
+        self.comUpdater.done.connect(lambda: print("Done signal emitted"))
         comUpdaterThread.finished.connect(lambda: print("Thread finished"))
         print(f"Main thread ID: {int(QThread.currentThreadId())}")
-
+        self.th = comUpdaterThread
         comUpdaterThread.start()
 
     @staticmethod
@@ -345,6 +386,7 @@ class SerialCommPanel(QWidget):
         for i in range(4):
             print(f"Iteration {i}")
             sleep(0.5)
+        return [1,2,5]
 
 
 if __name__ == '__main__':
@@ -359,5 +401,13 @@ if __name__ == '__main__':
     w.move(300, 300)
     w.setWindowTitle('Sample')
     w.show()
+
+    # w = QWidget()
+    # cb = QComboBox(w)
+    # cb.addItem('a')
+    # cb.addItem('b')
+    # cb.setItemData(0, 'tt1', Qt.ToolTipRole)
+    # cb.setItemData(1, 'tt2', Qt.ToolTipRole)
+    # w.show()
 
     sys.exit(app.exec())
