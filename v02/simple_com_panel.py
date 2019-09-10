@@ -4,16 +4,17 @@ from functools import partial
 import sys
 from threading import Thread
 from time import sleep
-from typing import Union, Callable
+from typing import Union, Callable, NewType, Tuple, List
 
-from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot
-from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor
+from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer
+from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
     QToolButton, QSizePolicy, QLineEdit
 
 # TODO: check for actions() to be updated when I .addAction() to widget
-from Utils import Logger
+from Utils import Logger, legacy, formatList
 from Transceiver import SerialTransceiver
+from serial.tools.list_ports_common import ListPortInfo as ComPortInfo
 from serial.tools.list_ports_windows import comports
 
 
@@ -59,6 +60,12 @@ class Chain:
     def __repr__(self): return f"Chain wrapper of {self['target']} object at {hex(id(self))}"
 
 
+class QDataAction(QAction):
+    def triggerWithData(self, data):
+        self.setData(data)
+        self.trigger()
+
+
 class WidgetActions:
     def __init__(self, owner: QWidget):
         self.owner: QWidget = owner
@@ -68,9 +75,10 @@ class WidgetActions:
         setattr(self, action.text().lower(), action)
 
     def add(self, id: str, name: str, slot: Callable = None, shortcut: str = None):
-        this = QAction(name, self.owner)
-        if shortcut: this.setShortcut(shortcut)
+        this = QDataAction(name, self.owner)
         if slot: this.triggered.connect(slot)
+        if shortcut: this.setShortcut(shortcut)
+        # CONSIDER: QWidget owner to auto-addAction()
         log.debug(f"Action '{name}' created, id={id}")
         setattr(self, id, this)
 
@@ -79,7 +87,7 @@ class WidgetActions:
         raise AttributeError(f"Action '{item}' does not exist")
 
 
-class ExtendedButton(QPushButton):
+class RightclickButton(QPushButton):
     rclicked = pyqtSignal()
     lclicked = pyqtSignal()
 
@@ -166,9 +174,13 @@ class SerialCommPanel(QWidget):
         super().__init__(*args)
         self.serialInt = devInt
         self.actionList = super().actions
-        self.actions = WidgetActions(self)
         self.comUpdaterThread = None
-        self.setupActions()
+        self.actions = WidgetActions(self)
+
+        self.actions.add(id='test', name='Test Action', slot=lambda: print("test_action_triggered"))
+        self.actions.add(id='changePort', name='Change Serial Port Action', slot=self.changeSerialPort)
+        self.actions.add(id='refreshPorts', name='Refresh Serial Ports Action', slot=self.updateComPortsAsync,
+                         shortcut=QKeySequence(QKeySequence.Refresh))
 
         self.startButton = self.newStartButton()
         self.commOptionsMenu = self.newCommOptionsMenu()
@@ -176,10 +188,10 @@ class SerialCommPanel(QWidget):
         self.comCombobox = self.newComCombobox()
         self.refreshPortsButton = self.newRefreshPortsButton()
         self.baudCombobox = self.newBaudCombobox()
-
         self.testLineEdit = self.newTestLineEdit()
         self.testLineEdit2 = self.newTestLineEdit()
         self.testLineEdit3 = self.newTestLineEdit()
+        self.testButton = self.newTestButton()
 
         self.initLayout()
         self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
@@ -212,16 +224,12 @@ class SerialCommPanel(QWidget):
         layout.addWidget(self.testLineEdit2)
         layout.addWidget(QLabel("–", self))
         layout.addWidget(self.testLineEdit3)
+        layout.addSpacing(spacing)
+        layout.addWidget(self.testButton)
         self.setLayout(layout)
 
-    def setupActions(self):
-        testAction = QAction('Test', self)
-        testAction.triggered.connect(lambda: print("test_action_triggered"))
-        self.actions.add(id='test', name='Test Action', slot=lambda: print("test_action_triggered"))
-
     def newStartButton(self):
-        this = ExtendedButton('Start', self)
-        this.clicked.connect(lambda: print("click on button!"))
+        this = RightclickButton('Start', self)
         this.lclicked.connect(self.testSlot)
         this.rclicked.connect(partial(self.dropStartButtonMenuBelow, this))
         return this
@@ -239,23 +247,19 @@ class SerialCommPanel(QWidget):
 
     def newComCombobox(self):
         this = QComboBox(parent=self)
-        this.setModel(QStringListModel())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
-        this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
+        # CONSIDER: ▼ adjust combobox drop-down size when update is performed with unfolded ports list
+        # this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
         this.setStyleSheet('background-color: rgb(255, 200, 255)')
-        # this.updateRequired.connect(self.updateComPorts)
-        changeComPortAction = QAction('SwapPort', this)
-        changeComPortAction.triggered.connect(self.changeSerialPort)  # TODO
-        self.addAction(changeComPortAction)
-        this.setValidator(None)  # TODO
-        this.setItemData(0, 'azaza', Qt.ToolTipRole)  # CONSIDER: doesn't work inside App(), works when adding itemData to stand-alone widget
+        this.currentIndexChanged[str].connect(self.actions.changePort.triggerWithData)
+        this.setValidator(None)  # TODO: setValidator()
         return this
 
     def newRefreshPortsButton(self):
-        this = SqButton(self)  # TODO: reload image and animation here
-        this.clicked.connect(self.updateComPortsAsync)
-        this.setIcon(QIcon(r"D:\GLEB\Python\refresh-gif-2.gif"))
+        this = SqButton(self)
+        this.clicked.connect(self.actions.refreshPorts.trigger)
+        this.setIcon(QIcon(r"D:\GLEB\Python\refresh-gif-2.gif"))  # TODO: manage ui resources
         this.setIconSize(this.sizeHint() - QSize(10,10))
         this.anim = QMovie(r"D:\GLEB\Python\refresh-gif-2.gif")
         this.anim.frameChanged.connect(lambda: this.setIcon(QIcon(this.anim.currentPixmap())))
@@ -269,8 +273,6 @@ class SerialCommPanel(QWidget):
         this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
         this.setStyleSheet('background-color: rgb(200, 255, 255)')
         this.insertItem(0, '11000000')
-        # changeComPortAction = QAction('SwapPort', this)
-        # changeComPortAction.triggered.connect(self.changeSerialPort)  # TODO
         # self.addAction(changeComPortAction)
         # this.setValidator(None)  # TODO
         return this
@@ -282,19 +284,22 @@ class SerialCommPanel(QWidget):
         # this.setMaximumSize(22, 22)
         return this
 
+    def newTestButton(self):
+        this = RightclickButton('Test', self)
+        this.clicked.connect(lambda: print("click on button!"))
+        this.lclicked.connect(self.testSlot)
+        return this
+
     def dropStartButtonMenuBelow(self, qWidget):
         self.commOptionsMenu.exec(self.mapToGlobal(qWidget.geometry().bottomLeft()))
 
     def getComPortsList(self):
         log.debug("Fetching com ports...")
-        newComPortsList = []
-        for i, port in enumerate(comports()):
-            newComPortsList.append(port.device.strip('COM'))
-            self.comCombobox.setItemData(i, port.description, Qt.ToolTipRole)  # CONSIDER: does not work... :(
-        log.debug(f"New COM ports list: {newComPortsList} ({len(newComPortsList)} items)")
-        # CONSIDER: adjust combobox drop-down size when update is performed with unfolded ports list
-        return newComPortsList
+        newComPorts: List[ComPortInfo] = comports()
+        log.debug(f"New com ports list: {', '.join(port.device for port in newComPorts)} ({len(newComPorts)} items)")
+        return newComPorts
 
+    @legacy
     def updateComPorts(self):
         log.debug(f"Updating com ports...")
         self.refreshPortsButton.anim.start()
@@ -313,37 +318,49 @@ class SerialCommPanel(QWidget):
         thread = QWorkerThread(self, name="Com ports refresh", target=self.getComPortsList)
         thread.done.connect(self.updateComCombobox)
         thread.started.connect(self.refreshPortsButton.anim.start)
-        thread.finished.connect(self.refreshPortsButton.anim.stop)
-        thread.finished.connect(partial(self.refreshPortsButton.anim.jumpToFrame, 0))
-        thread.finished.connect(partial(setattr, self, 'comUpdaterThread', None))
-        thread.finished.connect(partial(log.debug, f"Updating com ports: DONE"))
+        thread.finished.connect(self.finishUpdateComPorts)
         self.comUpdaterThread = thread
         log.debug(f"Main thread ID: {int(QThread.currentThreadId())}")
         thread.start()
 
-    def updateComCombobox(self, ports):
-        if ports != self.comCombobox.model().stringList():
-            self.comCombobox.clear()
-            self.comCombobox.addItems(ports)
-            # TODO: insert tooltips with port description
-        log.info(f"COM ports refreshed: {', '.join('COM' + str(port) for port in ports)}")
+    def finishUpdateComPorts(self):
+        self.refreshPortsButton.anim.stop()
+        self.refreshPortsButton.anim.jumpToFrame(0)
+        self.comUpdaterThread = None
+        log.debug(f"Updating com ports: DONE")
+
+    def updateComCombobox(self, ports: List[ComPortInfo]):
+        log.debug("Refreshing com ports combobox...")
+        combobox = self.comCombobox
+        currentPort = combobox.currentText()
+        currentPortNumbers = tuple(combobox.itemText(i) for i in range(combobox.count()))
+        newPortNumbers = tuple((port.device.strip('COM') for port in ports))
+        if currentPortNumbers != newPortNumbers:
+            combobox.blockSignals(True)
+            combobox.clear()
+            combobox.addItems((port.device.strip('COM') for port in ports))
+            combobox.blockSignals(False)
+            for i, port in enumerate(ports):
+                combobox.setItemData(i, port.description, Qt.ToolTipRole)
+            combobox.setCurrentIndex(combobox.findText(currentPort))
+            log.info(f"COM ports refreshed: {', '.join(f'COM{port}' for port in newPortNumbers)}")
+        else:
+            log.debug("Com ports refresh - no changes")
 
     def changeSerialPort(self):
-        sender = self.sender()
-        log.debug(f"Changing serial port to COM{sender.data()}...")
+        newPort = self.sender().data()  # TESTME: data() for action triggering from shortcut - ?
+        if newPort is '': return
+        else: newPort = 'COM' + newPort
+        log.debug(f"Changing serial port to {newPort}...")
         try:
-            self.serialInt.close()
-            self.serialInt.port = sender.data()
-            self.serialInt.open()
+            with self.serialInt.reopen():
+                self.serialInt.port = newPort
         except Exception as e:
             log.error(e)
-        else: log.info(f"Serial port changed to COM{sender.data()}")
+        else: log.info(f"Serial port changed to {newPort}")
 
     def testSlot(self, par=None):
-        print(f"test: {par}")
-        print(self.comCombobox.itemData(1, Qt.BackgroundRole))
-        self.comCombobox.setItemData(1, QColor(Qt.red), Qt.BackgroundRole)
-        print(self.comCombobox.itemData(1, Qt.BackgroundRole))
+        print(f"Port is open? {self.serialInt.is_open}")
 
     def testCustomQThread(self):
         class TestThread(QThread):
@@ -395,19 +412,36 @@ if __name__ == '__main__':
 
     # print(app.font().pointSize)
     # app.setFont(Chain(app.font()).setPointSize(10).ok)
+
     tr = SerialTransceiver()
     w = SerialCommPanel(tr)
     w.resize(100, 20)
     w.move(300, 300)
     w.setWindowTitle('Sample')
     w.show()
+    sys.exit(app.exec())
 
-    # w = QWidget()
-    # cb = QComboBox(w)
-    # cb.addItem('a')
-    # cb.addItem('b')
-    # cb.setItemData(0, 'tt1', Qt.ToolTipRole)
-    # cb.setItemData(1, 'tt2', Qt.ToolTipRole)
-    # w.show()
+
+
+    class TestWidget(QWidget):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.b = QPushButton("...", self)
+            self.b.move(40, 0)
+            self.b.clicked.connect(lambda: self.cb.setItemData(0, 'tt1', Qt.ToolTipRole))
+            self.cb = self.newCb()
+
+        def newCb(self):
+            this = QComboBox(parent=self)
+            this.setModel(QStringListModel())
+            this.setEditable(True)
+            this.addItem('a')
+            this.addItem('b')
+            # this.setItemData(0, 'tt1', Qt.ToolTipRole)
+            this.setItemData(1, 'tt2', Qt.ToolTipRole)
+            return this
+
+    w = TestWidget()
+    w.show()
 
     sys.exit(app.exec())
