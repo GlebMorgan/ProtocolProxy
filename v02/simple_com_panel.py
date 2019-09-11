@@ -1,5 +1,6 @@
 from __future__ import annotations as annotations_feature
 
+from enum import Enum
 from functools import partial
 import sys
 from threading import Thread
@@ -9,9 +10,8 @@ from typing import Union, Callable, NewType, Tuple, List
 from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer
 from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
-    QToolButton, QSizePolicy, QLineEdit
+    QToolButton, QSizePolicy, QLineEdit, QActionGroup
 
-# TODO: check for actions() to be updated when I .addAction() to widget
 from Utils import Logger, legacy, formatList
 from Transceiver import SerialTransceiver
 from serial.tools.list_ports_common import ListPortInfo as ComPortInfo
@@ -28,7 +28,16 @@ def trap_exc_during_debug(*args):
 
 sys.excepthook = trap_exc_during_debug
 
+# ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
+# TEMP TESTME TODO FIXME NOTE CONSIDER
+
 # TODO: tooltips
+
+# TODO: check for actions() to be updated when I .addAction() to widget
+
+# TODO: add sub-loggers to enable/disable logging of specific parts of code
+
+# ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
 
 class Chain:
@@ -66,21 +75,32 @@ class QDataAction(QAction):
         self.trigger()
 
 
-class WidgetActions:
+class WidgetActions(dict):
     def __init__(self, owner: QWidget):
+        super().__init__()
         self.owner: QWidget = owner
 
     def addAction(self, action: QAction):
         self.owner.addAction(action)
         setattr(self, action.text().lower(), action)
+        log.debug(f"Action '{action.text()}' created, id={action.text().lower()}")
 
-    def add(self, id: str, name: str, slot: Callable = None, shortcut: str = None):
-        this = QDataAction(name, self.owner)
-        if slot: this.triggered.connect(slot)
-        if shortcut: this.setShortcut(shortcut)
-        # CONSIDER: QWidget owner to auto-addAction()
-        log.debug(f"Action '{name}' created, id={id}")
+    def add(self, id: str, *args, **kwargs):
+        this = self.new(*args, **kwargs)
         setattr(self, id, this)
+
+    def new(self, name: str, slot: Callable = None,
+            shortcut: str = None, context: Qt.ShortcutContext = Qt.WindowShortcut):
+        this = QDataAction(name, self.owner)
+        if slot:
+            this.triggered.connect(slot)
+        if shortcut:
+            this.setShortcut(QKeySequence(shortcut))
+            this.setShortcutContext(context)
+        self.owner.addAction(this)
+        self[name] = this
+        log.debug(f"Action '{name}' created")
+        return this
 
     def __getattr__(self, item):
         """ Mock for pyCharm syntax highlighter """
@@ -168,36 +188,50 @@ class QWorkerThread(QThread):
         self.done.emit(self.function())
 
 
+class CommMode(Enum):
+    Continuous = 0
+    Manual = 1
+    Smart = 2
+
+
 class SerialCommPanel(QWidget):
 
     def __init__(self, devInt, *args):
         super().__init__(*args)
+
+        # Core
         self.serialInt = devInt
         self.actionList = super().actions
         self.comUpdaterThread = None
+        self.commMode = CommMode.Continuous
         self.actions = WidgetActions(self)
+        self.setActions()
 
-        self.actions.add(id='test', name='Test Action', slot=lambda: print("test_action_triggered"))
-        self.actions.add(id='changePort', name='Change Serial Port Action', slot=self.changeSerialPort)
-        self.actions.add(id='refreshPorts', name='Refresh Serial Ports Action', slot=self.updateComPortsAsync,
-                         shortcut=QKeySequence(QKeySequence.Refresh))
+        # Bindings
+        self.commButtonClicked: Callable = lambda: None  # active binding
+        self.continuousCommBinding: Callable = None
+        self.smartCommBinding: Callable = None
+        self.manualCommBinding: Callable = None
 
-        self.startButton = self.newStartButton()
-        self.commOptionsMenu = self.newCommOptionsMenu()
+        # Widgets
+        self.testButton = self.newTestButton()  # TEMP
+        self.commButton = self.newCommButton()
         self.commOptionsButton = self.newCommOptionsButton()
+        self.commOptionsMenu = self.newCommOptionsMenu()
         self.comCombobox = self.newComCombobox()
         self.refreshPortsButton = self.newRefreshPortsButton()
         self.baudCombobox = self.newBaudCombobox()
         self.testLineEdit = self.newTestLineEdit()
         self.testLineEdit2 = self.newTestLineEdit()
         self.testLineEdit3 = self.newTestLineEdit()
-        self.testButton = self.newTestButton()
 
+        # Setup
         self.initLayout()
+        self.changeCommMode(self.commMode)
+        self.updateComPortsAsync()
+
         self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
         self.setStyleSheet('background-color: rgb(200, 255, 200)')
-
-        self.updateComPortsAsync()
 
     def initLayout(self):
         spacing = self.font().pointSize()
@@ -205,7 +239,7 @@ class SerialCommPanel(QWidget):
         layout = QHBoxLayout()
         layout.setContentsMargins(*(smallSpacing,)*4)
         layout.setSpacing(0)
-        layout.addWidget(self.startButton)
+        layout.addWidget(self.commButton)
         layout.addWidget(self.commOptionsButton)
         layout.addSpacing(spacing)
         layout.addWidget(QLabel("COM", self))
@@ -228,21 +262,47 @@ class SerialCommPanel(QWidget):
         layout.addWidget(self.testButton)
         self.setLayout(layout)
 
-    def newStartButton(self):
-        this = RightclickButton('Start', self)
-        this.lclicked.connect(self.testSlot)
+    def setActions(self):
+        new = self.actions.new
+        self.actions.test = new(
+                name='Test', slot=self.testSlot)
+        self.actions.changePort = new(
+                name='Change COM port', slot=self.changeSerialPort)
+        self.actions.refreshPorts = new(
+                name='Refresh COM ports', slot=self.updateComPortsAsync, shortcut=QKeySequence("Ctrl+R"))
+
+    def newCommButton(self):
+        def setName(self: RightclickButton):
+            if self.parent().commMode == CommMode.Continuous:
+                self.setText('Stop' if self.text() == 'Start' else 'Start')  # TEMP - consider passing parameter
+        this = RightclickButton('Communication', self)
+        this.setName = setName.__get__(this, this.__class__)
         this.rclicked.connect(partial(self.dropStartButtonMenuBelow, this))
+        this.lclicked.connect(self.commButtonClicked)
+        this.lclicked.connect(this.setName)  # TEMP - connect this slot later to a result of self.commButtonClicked
+        this.lclicked.connect(lambda: self.serialInt.close() if self.serialInt.is_open else self.serialInt.open())  # TEMP
+        this.setName()
         return this
 
     def newCommOptionsMenu(self):
-        this = QMenu(self)
-        this.addAction(self.actions.test)
+        # CONSIDER: Radio button options are displayed as ✓ instead of • when using .setStyleSheet() on parent
+        this = QMenu("Communication mode", self)
+        actionGroup = QActionGroup(self)
+        for mode in CommMode.__members__:
+            action = actionGroup.addAction(QAction(f'{mode} mode', self))
+            action.setCheckable(True)
+            action.mode = CommMode[mode]
+            action.triggered.connect(partial(setattr, self, 'commMode', CommMode[mode]))
+            this.addAction(action)
+            if mode == self.commMode.name: action.setChecked(True)
+        actionGroup.triggered.connect(lambda x: log.debug(f"Communication mode set: {x.text()}"))
+        actionGroup.triggered.connect(self.changeCommMode)
+        this.group = actionGroup
         return this
 
     def newCommOptionsButton(self):
         this = SqButton('▼', self)  # TODO: increases height with '🞃'
-        this.clicked.connect(partial(self.dropStartButtonMenuBelow, self.startButton))
-        # this.setMaximumWidth(18)
+        this.clicked.connect(partial(self.dropStartButtonMenuBelow, self.commButton))
         return this
 
     def newComCombobox(self):
@@ -287,13 +347,33 @@ class SerialCommPanel(QWidget):
     def newTestButton(self):
         this = RightclickButton('Test', self)
         this.clicked.connect(lambda: print("click on button!"))
-        this.lclicked.connect(self.testSlot)
+        this.lclicked.connect(self.actions.test.trigger)
         return this
 
     def dropStartButtonMenuBelow(self, qWidget):
         self.commOptionsMenu.exec(self.mapToGlobal(qWidget.geometry().bottomLeft()))
 
-    def getComPortsList(self):
+    def changeCommMode(self, action: Union[QAction, CommMode]):
+        if isinstance(action, CommMode): mode = action
+        else: mode = action.mode
+        log.debug(f"Changing communication mode to {mode}")
+
+        button = self.commButton
+        self.commMode = mode
+
+        if mode == CommMode.Continuous:
+            self.commButtonClicked = self.continuousCommBinding
+
+        elif mode == CommMode.Smart:
+            self.commButtonClicked = self.smartCommBinding
+            button.setText('Send')
+        elif mode == CommMode.Manual:
+            self.commButtonClicked = self.manualCommBinding
+            button.setText('Send')
+        else: raise AttributeError(f"Unsupported mode '{mode.name}'")
+
+    @staticmethod
+    def getComPortsList():
         log.debug("Fetching com ports...")
         newComPorts: List[ComPortInfo] = comports()
         log.debug(f"New com ports list: {', '.join(port.device for port in newComPorts)} ({len(newComPorts)} items)")
@@ -348,7 +428,7 @@ class SerialCommPanel(QWidget):
             log.debug("Com ports refresh - no changes")
 
     def changeSerialPort(self):
-        newPort = self.sender().data()  # TESTME: data() for action triggering from shortcut - ?
+        newPort = self.sender().data()
         if newPort is '': return
         else: newPort = 'COM' + newPort
         log.debug(f"Changing serial port to {newPort}...")
@@ -361,6 +441,7 @@ class SerialCommPanel(QWidget):
 
     def testSlot(self, par=None):
         print(f"Port is open? {self.serialInt.is_open}")
+        print(f"Communication mode: {self.commMode.name}")
 
     def testCustomQThread(self):
         class TestThread(QThread):
@@ -418,6 +499,17 @@ if __name__ == '__main__':
     w.resize(100, 20)
     w.move(300, 300)
     w.setWindowTitle('Sample')
+
+    # test=QPushButton('TestShortcut', w)
+    # action = QAction('Test Shortcut Action')
+    # action.setShortcut(QKeySequence("Ctrl+E"))
+    # action.setShortcutContext(Qt.ApplicationShortcut)
+    # w.addAction(action)
+    # action.triggered.connect(lambda: print("Shortcut action triggered"))
+    # # test.addAction(action)
+    # # test.setShortcut(QKeySequence("Ctrl+R"))
+    # test.clicked.connect(action.trigger)
+
     w.show()
     sys.exit(app.exec())
 
