@@ -7,13 +7,15 @@ from threading import Thread
 from time import sleep
 from typing import Union, Callable, NewType, Tuple, List
 
-from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer
-from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence
+from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer, \
+    QRegularExpression as QRegex
+from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence, QIntValidator, \
+    QRegularExpressionValidator as QRegexValidator
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
     QToolButton, QSizePolicy, QLineEdit, QActionGroup
 
-from Utils import Logger, legacy, formatList
-from Transceiver import SerialTransceiver
+from Utils import Logger, legacy, formatList, ignoreErrors
+from Transceiver import SerialTransceiver, SerialError
 from serial.tools.list_ports_common import ListPortInfo as ComPortInfo
 from serial.tools.list_ports_windows import comports
 
@@ -131,12 +133,15 @@ class SqButton(QPushButton):
 
 
 class SymbolLineEdit(QLineEdit):
-    def __init__(self, *args, symbols):
-        super().__init__(*args)
-        self.symbols = symbols
+    def __init__(self, *args, symbols, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.symbols = tuple(str(item) for item in symbols)
 
     def sizeHint(self):
-        width = max(QFontMetrics(self.font()).horizontalAdvance(ch) for ch in self.symbols)
+        if isinstance(self.symbols, str):
+            width = QFontMetrics(self.font()).horizontalAdvance(self.symbols)
+        else:
+            width = max(QFontMetrics(self.font()).horizontalAdvance(ch) for ch in self.symbols)
         height = super().sizeHint().height()
         self.setMaximumWidth(width+height/2)
         return QSize(width+height/2, super().sizeHint().height())
@@ -200,11 +205,11 @@ class SerialCommPanel(QWidget):
         super().__init__(*args)
 
         # Core
-        self.serialInt = devInt
+        self.serialInt: SerialTransceiver = devInt
         self.actionList = super().actions
-        self.comUpdaterThread = None
-        self.commMode = CommMode.Continuous
-        self.actions = WidgetActions(self)
+        self.comUpdaterThread: QThread = None
+        self.commMode: CommMode = CommMode.Continuous
+        self.actions: dict = WidgetActions(self)
         self.setActions()
 
         # Bindings
@@ -221,16 +226,19 @@ class SerialCommPanel(QWidget):
         self.comCombobox = self.newComCombobox()
         self.refreshPortsButton = self.newRefreshPortsButton()
         self.baudCombobox = self.newBaudCombobox()
-        self.testLineEdit = self.newTestLineEdit()
-        self.testLineEdit2 = self.newTestLineEdit()
-        self.testLineEdit3 = self.newTestLineEdit()
+        self.bytesizeEdit = self.newDataframeEdit(
+                chars=self.serialInt.BYTESIZES, default=self.serialInt.DEFAULT_CONFIG['bytesize'])
+        self.parityEdit = self.newDataframeEdit(
+                chars=self.serialInt.PARITIES, default=self.serialInt.DEFAULT_CONFIG['parity'])
+        self.stopbitsEdit = self.newDataframeEdit(
+                chars=(1,2), default=self.serialInt.DEFAULT_CONFIG['stopbits'])
 
         # Setup
         self.initLayout()
         self.changeCommMode(self.commMode)
         self.updateComPortsAsync()
 
-        self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
+        # self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
         self.setStyleSheet('background-color: rgb(200, 255, 200)')
 
     def initLayout(self):
@@ -253,11 +261,11 @@ class SerialCommPanel(QWidget):
         layout.addSpacing(spacing)
         layout.addWidget(QLabel("FRAME", self))
         layout.addSpacing(smallSpacing)
-        layout.addWidget(self.testLineEdit)
+        layout.addWidget(self.bytesizeEdit)
         layout.addWidget(QLabel("–", self))
-        layout.addWidget(self.testLineEdit2)
+        layout.addWidget(self.parityEdit)
         layout.addWidget(QLabel("–", self))
-        layout.addWidget(self.testLineEdit3)
+        layout.addWidget(self.stopbitsEdit)
         layout.addSpacing(spacing)
         layout.addWidget(self.testButton)
         self.setLayout(layout)
@@ -267,9 +275,11 @@ class SerialCommPanel(QWidget):
         self.actions.test = new(
                 name='Test', slot=self.testSlot)
         self.actions.changePort = new(
-                name='Change COM port', slot=self.changeSerialPort)
+                name='Change COM port', slot=lambda: self.changeSerialPort(self.comCombobox.currentText()))
         self.actions.refreshPorts = new(
                 name='Refresh COM ports', slot=self.updateComPortsAsync, shortcut=QKeySequence("Ctrl+R"))
+        self.actions.changeBaud = new(
+                name='Change COM baudrate', slot=lambda: self.changeBaud(self.baudCombobox.currentText()))
 
     def newCommButton(self):
         def setName(self: RightclickButton):
@@ -280,7 +290,8 @@ class SerialCommPanel(QWidget):
         this.rclicked.connect(partial(self.dropStartButtonMenuBelow, this))
         this.lclicked.connect(self.commButtonClicked)
         this.lclicked.connect(this.setName)  # TEMP - connect this slot later to a result of self.commButtonClicked
-        this.lclicked.connect(lambda: self.serialInt.close() if self.serialInt.is_open else self.serialInt.open())  # TEMP
+        this.lclicked.connect(
+                lambda: self.serialInt.close() if self.serialInt.is_open else self.serialInt.open())  # TEMP
         this.setName()
         return this
 
@@ -312,7 +323,7 @@ class SerialCommPanel(QWidget):
         # CONSIDER: ▼ adjust combobox drop-down size when update is performed with unfolded ports list
         # this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
         this.setStyleSheet('background-color: rgb(255, 200, 255)')
-        this.currentIndexChanged[str].connect(self.actions.changePort.triggerWithData)
+        this.lineEdit().editingFinished.connect(self.actions.changePort.trigger)
         this.setValidator(None)  # TODO: setValidator()
         return this
 
@@ -326,21 +337,34 @@ class SerialCommPanel(QWidget):
         return this
 
     def newBaudCombobox(self):
+        # TODO: adjust size to fit MAX_DIGITS digits
+        MAX_DIGITS = 7
         this = QComboBox(parent=self)
-        this.setModel(QStringListModel())
+        this.maxChars = MAX_DIGITS
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
-        this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
+        this.setSizeAdjustPolicy(this.AdjustToContents)
         this.setStyleSheet('background-color: rgb(200, 255, 255)')
-        this.insertItem(0, '11000000')
-        # self.addAction(changeComPortAction)
-        # this.setValidator(None)  # TODO
+        items = self.serialInt.BAUDRATES[self.serialInt.BAUDRATES.index(9600): self.serialInt.BAUDRATES.index(921600)+1]
+        this.addItems((str(num) for num in items))
+        this.setMaxVisibleItems(len(items))
+        with ignoreErrors(): this.setCurrentIndex(items.index(self.serialInt.DEFAULT_CONFIG['baudrate']))
+        log.debug(f"BaudCombobox: max items = {this.maxVisibleItems()}")
+        this.lineEdit().editingFinished.connect(self.actions.changeBaud.trigger)
+        # this.setValidator(QIntValidator(0, 10_000_000, this))  # TODO
+        this.setValidator(QRegexValidator(QRegex(rf"[1-9]{{1}}[0-9]{{0,{MAX_DIGITS-1}}}"), this))
         return this
 
-    def newTestLineEdit(self):
-        this = SymbolLineEdit("I", self, symbols=('N', 'E', 'O', 'S', 'M'))
+    def newDataframeEdit(self, chars, default):
+        chars = tuple(str(ch) for ch in chars)
+        this = SymbolLineEdit("X", self, symbols=chars)
         this.setAlignment(Qt.AlignCenter)
         this.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        this.setText(str(default))
+        this.textEdited.connect(lambda text: this.setText(text.upper()))
+        constrainToExistingRegex = QRegex('|'.join(chars)+r'/I')
+        constrainToExistingRegex.setPatternOptions(QRegex.CaseInsensitiveOption)
+        this.setValidator(QRegexValidator(constrainToExistingRegex))
         # this.setMaximumSize(22, 22)
         return this
 
@@ -427,20 +451,35 @@ class SerialCommPanel(QWidget):
         else:
             log.debug("Com ports refresh - no changes")
 
-    def changeSerialPort(self):
-        newPort = self.sender().data()
-        if newPort is '': return
+    def changeSerialPort(self, newPort:str):
+        # newPort = self.sender().data()
+        if newPort == '':
+            log.debug(f"Serial port is not chosen - cancelling")
+            return
+        currPort = self.serialInt.port.strip('COM') if self.serialInt.port is not None else None
+        if newPort == currPort:
+            log.debug(f"Serial port {currPort} is already set - cancelling")
+            return
         else: newPort = 'COM' + newPort
-        log.debug(f"Changing serial port to {newPort}...")
+        log.debug(f"Changing serial port from {currPort} to {newPort}...")
         try:
             with self.serialInt.reopen():
                 self.serialInt.port = newPort
-        except Exception as e:
+        except SerialError as e:
             log.error(e)
-        else: log.info(f"Serial port changed to {newPort}")
+        else: log.info(f"Serial port ––► {newPort}")
+
+    def changeBaud(self, newBaud):
+        # newBaud = self.sender().data()
+        log.debug(f"Changing serial baudrate to {newBaud}...")
+        try:
+            self.serialInt.baudrate = newBaud
+        except SerialError as e:
+            log.error(e)
+        else: log.info(f"Serial baudrate ––► {newBaud}")
 
     def testSlot(self, par=None):
-        print(f"Port is open? {self.serialInt.is_open}")
+        print(f"Serial int: {self.serialInt}")
         print(f"Communication mode: {self.commMode.name}")
 
     def testCustomQThread(self):
