@@ -8,7 +8,7 @@ from time import sleep
 from typing import Union, Callable, NewType, Tuple, List
 
 from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer, \
-    QRegularExpression as QRegex
+    QRegularExpression as QRegex, QEvent
 from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence, QIntValidator, \
     QRegularExpressionValidator as QRegexValidator
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
@@ -33,15 +33,15 @@ sys.excepthook = trap_exc_during_debug
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 # TEMP TESTME TODO FIXME NOTE CONSIDER
 
-# TODO: Tooltips
+# ✓ Tooltips
 
-# TODO: Check for actions() to be updated when I .addAction() to widget
+# ? TODO: Check for actions() to be updated when I .addAction() to widget
 
 # TODO: Add sub-loggers to enable/disable logging of specific parts of code
 
 # TODO: Keyboard-layout independence option
 
-# FIXME: Mouse events are not caught by QComboBoxes
+# TODO: Do not accept and apply value in combobox's lineEdit when drop-down is triggered
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
@@ -156,7 +156,9 @@ class QSqButton(QPushButton):
 
 class QAutoSelectLineEdit(QLineEdit):
     def mouseReleaseEvent(self, qMouseEvent):
-        if qMouseEvent.button() == Qt.MiddleButton:
+        if qMouseEvent.button() == Qt.LeftButton and QApplication.keyboardModifiers() & Qt.ControlModifier:
+            QTimer().singleShot(0, self.selectAll)
+        elif qMouseEvent.button() == Qt.MiddleButton:
             QTimer().singleShot(0, self.selectAll)
         return super().mouseReleaseEvent(qMouseEvent)
 
@@ -188,7 +190,7 @@ class ComPortUpdater(QObject):
         newComPortsList = []
         for i, port in enumerate(comports()):
             newComPortsList.append(port.device.strip('COM'))
-            self.combobox.setItemData(i, port.description, Qt.ToolTipRole)  # CONSIDER: does not work... :(
+            self.combobox.setItemData(i, port.description, Qt.ToolTipRole)
         log.debug(f"New COM ports list: {newComPortsList} ({len(newComPortsList)} items)")
         return newComPortsList
 
@@ -227,11 +229,27 @@ class CommMode(Enum):
     Manual = 1
     Smart = 2
 
+@legacy
+class QKeyModifierEventFilter(QObject):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.keysDown = set()
+
+    def eventFilter(self, qObject, qEvent):
+        print(qEvent)
+        if qEvent.type() == QEvent.KeyPress:
+            self.keysDown.add(qEvent.key())
+            print(f"Key {qEvent.key().text()} ▼")
+        if qEvent.type() == QEvent.KeyRelease:
+            self.keysDown.remove(qEvent.key())
+            print(f"Key {qEvent.key().text()} ▲")
+        return super().eventFilter(qObject, qEvent)
+
 
 class SerialCommPanel(QWidget):
 
-    def __init__(self, devInt, *args):
-        super().__init__(*args)
+    def __init__(self, parent, devInt, *args):
+        super().__init__(parent, *args)
 
         # Core
         self.serialInt: SerialTransceiver = devInt
@@ -264,7 +282,7 @@ class SerialCommPanel(QWidget):
         self.changeCommMode(self.commMode)
         self.updateComPortsAsync()
 
-        # self.setFixedSize(self.minimumSize())  # CONSIDER: SizePolicy is not working
+        self.setFixedSize(self.sizeHint())  # CONSIDER: SizePolicy is not working
         self.setStyleSheet('background-color: rgb(200, 255, 200)')
 
     def initLayout(self):
@@ -315,9 +333,18 @@ class SerialCommPanel(QWidget):
                                           slot=lambda: self.changeSerialConfig('stopbits', self.stopbitsEdit.text()))
 
     def newCommButton(self):
-        def setName(self: QRightclickButton):
-            if self.parent().commMode == CommMode.Continuous:
-                self.setText('Stop' if self.text() == 'Start' else 'Start')  # TEMP - consider passing parameter
+        def setName(this: QRightclickButton, mode=self.commMode):
+            if mode == CommMode.Continuous:
+                this.setText('Start' if self.serialInt.is_open else 'Stop')  # TEMP - consider passing parameter
+                this.setToolTip("Start/Stop communication loop")
+            elif mode == CommMode.Smart:
+                this.setText('Send/Auto')
+                this.setToolTip("Packets are sent automatically + on button click")
+            elif mode == CommMode.Manual:
+                this.setText('Send')
+                this.setToolTip("Send single packet")
+            else: raise AttributeError(f"Unsupported mode '{mode.name}'")
+
         this = QRightclickButton('Communication', self)
         this.setName = setName.__get__(this, this.__class__)
         this.rclicked.connect(partial(self.dropStartButtonMenuBelow, this))
@@ -344,20 +371,21 @@ class SerialCommPanel(QWidget):
         return this
 
     def newCommOptionsButton(self):
-        this = QSqButton('▼', self)  # TODO: increases height with '🞃'
+        this = QSqButton('▼', self)  # CONSIDER: increases height with '🞃'
         this.clicked.connect(partial(self.dropStartButtonMenuBelow, self.commButton))
+        this.setToolTip("Communication mode")
         return this
 
     def newComCombobox(self):
         this = QComboBox(parent=self)
+        this.contents = ()
         this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
-        # CONSIDER: ▼ adjust combobox drop-down size when update is performed with unfolded ports list
-        # this.view().setSizeAdjustPolicy(this.view().AdjustToContents)
         this.setStyleSheet('background-color: rgb(255, 200, 255)')
+        # Note: .validator is set in updateComCombobox()
         this.lineEdit().editingFinished.connect(self.actions.changePort.trigger)
-        this.setValidator(None)  # TODO: setValidator()
+        this.setToolTip("COM port")
         return this
 
     def newRefreshPortsButton(self):
@@ -367,14 +395,15 @@ class SerialCommPanel(QWidget):
         this.setIconSize(this.sizeHint() - QSize(10,10))
         this.anim = QMovie(r"D:\GLEB\Python\refresh-gif-2.gif")
         this.anim.frameChanged.connect(lambda: this.setIcon(QIcon(this.anim.currentPixmap())))
+        this.setToolTip("Refresh COM ports list")
         return this
 
     def newBaudCombobox(self):
         # TODO: adjust size to fit MAX_DIGITS digits
         MAX_DIGITS = 7
         this = QComboBox(parent=self)
-        this.setLineEdit(QAutoSelectLineEdit())
         this.maxChars = MAX_DIGITS
+        this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
         this.setSizeAdjustPolicy(this.AdjustToContents)
@@ -383,10 +412,11 @@ class SerialCommPanel(QWidget):
         this.addItems((str(num) for num in items))
         this.setMaxVisibleItems(len(items))
         with ignoreErrors(): this.setCurrentIndex(items.index(self.serialInt.DEFAULT_CONFIG['baudrate']))
+        this.setFixedWidth(QFontMetrics(self.font()).horizontalAdvance('0'*MAX_DIGITS) + self.height())
         log.debug(f"BaudCombobox: max items = {this.maxVisibleItems()}")
         this.lineEdit().editingFinished.connect(self.actions.changeBaud.trigger)
-        # this.setValidator(QIntValidator(0, 10_000_000, this))  # TODO
         this.setValidator(QRegexValidator(QRegex(rf"[1-9]{{1}}[0-9]{{0,{MAX_DIGITS-1}}}"), this))
+        this.setToolTip("Baudrate (speed)")
         return this
 
     def newDataFrameEdit(self, name, chars):
@@ -396,17 +426,17 @@ class SerialCommPanel(QWidget):
         this.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         this.setText(str(self.serialInt.DEFAULT_CONFIG[name]))
         this.textEdited.connect(lambda text: this.setText(text.upper()))
-        constrainToExistingRegex = QRegex('|'.join(chars))
-        constrainToExistingRegex.setPatternOptions(QRegex.CaseInsensitiveOption)
-        this.setValidator(QRegexValidator(constrainToExistingRegex))
+        this.setValidator(QRegexValidator(QRegex('|'.join(chars), options=QRegex.CaseInsensitiveOption)))
         this.editingFinished.connect(getattr(self.actions, f'change{name.capitalize()}').trigger)
         # this.setMaximumSize(22, 22)
+        this.setToolTip(name.capitalize())
         return this
 
     def newTestButton(self):
         this = QRightclickButton('Test', self)
         this.clicked.connect(lambda: print("click on button!"))
         this.lclicked.connect(self.actions.test.trigger)
+        this.setToolTip("Test")
         return this
 
     def dropStartButtonMenuBelow(self, qWidget):
@@ -416,20 +446,9 @@ class SerialCommPanel(QWidget):
         if isinstance(action, CommMode): mode = action
         else: mode = action.mode
         log.debug(f"Changing communication mode to {mode}...")
-
-        button = self.commButton
         self.commMode = mode
-
-        if mode == CommMode.Continuous:
-            self.commButtonClicked = self.continuousCommBinding
-
-        elif mode == CommMode.Smart:
-            self.commButtonClicked = self.smartCommBinding
-            button.setText('Send')
-        elif mode == CommMode.Manual:
-            self.commButtonClicked = self.manualCommBinding
-            button.setText('Send')
-        else: raise AttributeError(f"Unsupported mode '{mode.name}'")
+        self.commButtonClicked = getattr(self, f'{mode.name.lower()}CommBinding')
+        self.commButton.setName(mode)
         log.info(f"Communication mode ——► {mode.name}")
 
     @staticmethod
@@ -473,16 +492,21 @@ class SerialCommPanel(QWidget):
         log.debug("Refreshing com ports combobox...")
         combobox = self.comCombobox
         currentPort = combobox.currentText()
-        currentPortNumbers = tuple(combobox.itemText(i) for i in range(combobox.count()))
         newPortNumbers = tuple((port.device.strip('COM') for port in ports))
-        if currentPortNumbers != newPortNumbers:
+        if combobox.contents != newPortNumbers:
             combobox.blockSignals(True)
             combobox.clear()
-            combobox.addItems((port.device.strip('COM') for port in ports))
+            combobox.addItems(newPortNumbers)
             combobox.blockSignals(False)
             for i, port in enumerate(ports):
                 combobox.setItemData(i, port.description, Qt.ToolTipRole)
             combobox.setCurrentIndex(combobox.findText(currentPort))
+            combobox.contents = newPortNumbers
+            currentComPortsRegex = QRegex('|'.join(combobox.contents), options=QRegex.CaseInsensitiveOption)
+            combobox.setValidator(QRegexValidator(currentComPortsRegex))
+            if combobox.view().isVisible():
+                combobox.hidePopup()
+                combobox.showPopup()
             log.info(f"COM ports refreshed: {', '.join(f'COM{port}' for port in newPortNumbers)}")
         else:
             log.debug("Com ports refresh - no changes")
@@ -587,12 +611,12 @@ if __name__ == '__main__':
 
     # print(app.font().pointSize)
     # app.setFont(Chain(app.font()).setPointSize(10).ok)
-
+    p = QWidget()
+    p.setWindowTitle('Simple COM Panel - dev')
     tr = SerialTransceiver()
-    w = SerialCommPanel(tr)
-    w.resize(100, 20)
-    w.move(300, 300)
-    w.setWindowTitle('Sample')
+    cp = SerialCommPanel(p, tr)
+    cp.resize(100, 20)
+    cp.move(300, 300)
 
     # test=QPushButton('TestShortcut', w)
     # action = QAction('Test Shortcut Action')
@@ -603,8 +627,10 @@ if __name__ == '__main__':
     # # test.addAction(action)
     # # test.setShortcut(QKeySequence("Ctrl+R"))
     # test.clicked.connect(action.trigger)
-
-    w.show()
+    l = QHBoxLayout()
+    l.addWidget(cp)
+    p.setLayout(l)
+    p.show()
     sys.exit(app.exec())
 
 
