@@ -2,6 +2,7 @@ from __future__ import annotations as annotations_feature
 
 from enum import Enum
 from functools import partial
+from random import randint
 import sys
 from threading import Thread
 from time import sleep
@@ -20,16 +21,6 @@ from serial.tools.list_ports_common import ListPortInfo as ComPortInfo
 from serial.tools.list_ports_windows import comports
 
 
-# Default layout spacing = 5
-# Default ContentsMargins = 12
-
-log = Logger("ComPanel")
-
-def trap_exc_during_debug(*args):
-    raise args[0]
-
-sys.excepthook = trap_exc_during_debug
-
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 # TEMP TESTME TODO FIXME NOTE CONSIDER
 
@@ -41,9 +32,55 @@ sys.excepthook = trap_exc_during_debug
 
 # TODO: Keyboard-layout independence option
 
-# TODO: Do not accept and apply value in combobox's lineEdit when drop-down is triggered
+# ✓ Do not accept and apply value in combobox's lineEdit when drop-down is triggered
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
+
+
+# Default layout spacing = 5
+# Default ContentsMargins = 12
+
+
+log = Logger("ComPanel")
+
+
+def trap_exc_during_debug(*args):
+    raise RuntimeError(f'PyQt5 says "{args[1]}"')
+sys.excepthook = trap_exc_during_debug
+
+
+@legacy
+class QAutoSelect(QWidget):
+    def focusInEvent(self, QFocusEvent):
+        self.selectInput()
+        return super().focusInEvent(QFocusEvent)
+
+    def mouseReleaseEvent(self, qMouseEvent):
+        self.selectInput()
+        return super().mouseReleaseEvent(qMouseEvent)
+
+    def selectInput(self):
+        try:
+            QTimer().singleShot(0, self.selectAll)
+        except AttributeError:
+            QTimer().singleShot(0, self.lineEdit().selectAll)
+
+
+@legacy
+class QKeyModifierEventFilter(QObject):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.keysDown = set()
+
+    def eventFilter(self, qObject, qEvent):
+        print(qEvent)
+        if qEvent.type() == QEvent.KeyPress:
+            self.keysDown.add(qEvent.key())
+            print(f"Key {qEvent.key().text()} ▼")
+        if qEvent.type() == QEvent.KeyRelease:
+            self.keysDown.remove(qEvent.key())
+            print(f"Key {qEvent.key().text()} ▲")
+        return super().eventFilter(qObject, qEvent)
 
 
 class Chain:
@@ -112,23 +149,6 @@ class WidgetActions(dict):
     def __getattr__(self, item):
         """ Mock for pyCharm syntax highlighter """
         raise AttributeError(f"Action '{item}' does not exist")
-
-
-@legacy
-class QAutoSelect(QWidget):
-    def focusInEvent(self, QFocusEvent):
-        self.selectInput()
-        return super().focusInEvent(QFocusEvent)
-
-    def mouseReleaseEvent(self, qMouseEvent):
-        self.selectInput()
-        return super().mouseReleaseEvent(qMouseEvent)
-
-    def selectInput(self):
-        try:
-            QTimer().singleShot(0, self.selectAll)
-        except AttributeError:
-            QTimer().singleShot(0, self.lineEdit().selectAll)
 
 
 class QRightclickButton(QPushButton):
@@ -228,22 +248,6 @@ class CommMode(Enum):
     Continuous = 0
     Manual = 1
     Smart = 2
-
-@legacy
-class QKeyModifierEventFilter(QObject):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.keysDown = set()
-
-    def eventFilter(self, qObject, qEvent):
-        print(qEvent)
-        if qEvent.type() == QEvent.KeyPress:
-            self.keysDown.add(qEvent.key())
-            print(f"Key {qEvent.key().text()} ▼")
-        if qEvent.type() == QEvent.KeyRelease:
-            self.keysDown.remove(qEvent.key())
-            print(f"Key {qEvent.key().text()} ▲")
-        return super().eventFilter(qObject, qEvent)
 
 
 class SerialCommPanel(QWidget):
@@ -384,6 +388,7 @@ class SerialCommPanel(QWidget):
         this.setInsertPolicy(QComboBox.NoInsert)
         this.setStyleSheet('background-color: rgb(255, 200, 255)')
         # Note: .validator is set in updateComCombobox()
+        this.setFixedWidth(QFontMetrics(self.font()).horizontalAdvance('000') + self.height())
         this.lineEdit().editingFinished.connect(self.actions.changePort.trigger)
         this.setToolTip("COM port")
         return this
@@ -399,7 +404,6 @@ class SerialCommPanel(QWidget):
         return this
 
     def newBaudCombobox(self):
-        # TODO: adjust size to fit MAX_DIGITS digits
         MAX_DIGITS = 7
         this = QComboBox(parent=self)
         this.maxChars = MAX_DIGITS
@@ -428,7 +432,6 @@ class SerialCommPanel(QWidget):
         this.textEdited.connect(lambda text: this.setText(text.upper()))
         this.setValidator(QRegexValidator(QRegex('|'.join(chars), options=QRegex.CaseInsensitiveOption)))
         this.editingFinished.connect(getattr(self.actions, f'change{name.capitalize()}').trigger)
-        # this.setMaximumSize(22, 22)
         this.setToolTip(name.capitalize())
         return this
 
@@ -436,6 +439,8 @@ class SerialCommPanel(QWidget):
         this = QRightclickButton('Test', self)
         this.clicked.connect(lambda: print("click on button!"))
         this.lclicked.connect(self.actions.test.trigger)
+        this.setProperty('testField', True)
+        this.setStyleSheet('*[testField="false"] {border-width: 2px; border-color: red;}')
         this.setToolTip("Test")
         return this
 
@@ -457,17 +462,6 @@ class SerialCommPanel(QWidget):
         newComPorts: List[ComPortInfo] = comports()
         log.debug(f"New com ports list: {', '.join(port.device for port in newComPorts)} ({len(newComPorts)} items)")
         return newComPorts
-
-    @legacy
-    def updateComPorts(self):
-        log.debug(f"Updating com ports...")
-        self.refreshPortsButton.anim.start()
-        ports = self.getComPortsList()
-        if ports != self.comCombobox.model().stringList():
-            self.comCombobox.clear()
-            self.comCombobox.addItems(ports)
-        self.refreshPortsButton.anim.stop()
-        log.debug(f"Com ports updated")
 
     def updateComPortsAsync(self):
         if self.comUpdaterThread is not None:
@@ -512,6 +506,7 @@ class SerialCommPanel(QWidget):
             log.debug("Com ports refresh - no changes")
 
     def changeSerialConfig(self, setting: str, value):
+        if setting == 'port' and self.comCombobox.view().hasFocus(): return
         if value == '':
             log.debug(f"Serial {setting} is not chosen — cancelling")
             return
@@ -527,6 +522,27 @@ class SerialCommPanel(QWidget):
                 setattr(interface, setting, value)
         except SerialError as e: log.error(e)
         else: log.info(f"Serial {setting} ——► {value}")
+
+    def testSlot(self, par=...):
+        if par is not ...: print(f"Par: {par}")
+        print(f"Serial int: {self.serialInt}")
+        print(f"Communication mode: {self.commMode.name}")
+        self.testButton.setProperty("testField", False)
+        self.testButton.setStyleSheet(self.testButton.styleSheet())
+        # self.comCombobox.setStyleSheet('QComboBox:hover {color: hsv(120, 255, 255)}')
+
+# ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
+
+    @legacy
+    def updateComPorts(self):
+        log.debug(f"Updating com ports...")
+        self.refreshPortsButton.anim.start()
+        ports = self.getComPortsList()
+        if ports != self.comCombobox.model().stringList():
+            self.comCombobox.clear()
+            self.comCombobox.addItems(ports)
+        self.refreshPortsButton.anim.stop()
+        log.debug(f"Com ports updated")
 
     @legacy
     def changeSerialPort(self, newPort: str):
@@ -557,10 +573,7 @@ class SerialCommPanel(QWidget):
             log.error(e)
         else: log.info(f"Serial baudrate ––► {newBaud}")
 
-    def testSlot(self, par=None):
-        print(f"Serial int: {self.serialInt}")
-        print(f"Communication mode: {self.commMode.name}")
-
+    @legacy
     def testCustomQThread(self):
         class TestThread(QThread):
             done = pyqtSignal(object)
@@ -580,10 +593,12 @@ class SerialCommPanel(QWidget):
         th.start()
         self.comUpdaterThread = th
 
+    @legacy
     def testPythonThreads(self):
         comUpdateThread = Thread(name="TestUpdateComs", target=self.blockingTest)
         comUpdateThread.start()
 
+    @legacy
     def testQThread(self):
         comUpdaterThread = QThread(self)
         comUpdaterThread.setObjectName('ComUpdaterThread')
@@ -598,11 +613,17 @@ class SerialCommPanel(QWidget):
         comUpdaterThread.start()
 
     @staticmethod
+    @legacy
     def blockingTest():
         for i in range(4):
             print(f"Iteration {i}")
             sleep(0.5)
         return [1,2,5]
+
+
+
+
+
 
 
 if __name__ == '__main__':
