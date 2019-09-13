@@ -33,11 +33,15 @@ sys.excepthook = trap_exc_during_debug
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 # TEMP TESTME TODO FIXME NOTE CONSIDER
 
-# TODO: tooltips
+# TODO: Tooltips
 
-# TODO: check for actions() to be updated when I .addAction() to widget
+# TODO: Check for actions() to be updated when I .addAction() to widget
 
-# TODO: add sub-loggers to enable/disable logging of specific parts of code
+# TODO: Add sub-loggers to enable/disable logging of specific parts of code
+
+# TODO: Keyboard-layout independence option
+
+# FIXME: Mouse events are not caught by QComboBoxes
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
@@ -95,6 +99,7 @@ class WidgetActions(dict):
             shortcut: str = None, context: Qt.ShortcutContext = Qt.WindowShortcut):
         this = QDataAction(name, self.owner)
         if slot:
+            this.slot = slot
             this.triggered.connect(slot)
         if shortcut:
             this.setShortcut(QKeySequence(shortcut))
@@ -109,7 +114,24 @@ class WidgetActions(dict):
         raise AttributeError(f"Action '{item}' does not exist")
 
 
-class RightclickButton(QPushButton):
+@legacy
+class QAutoSelect(QWidget):
+    def focusInEvent(self, QFocusEvent):
+        self.selectInput()
+        return super().focusInEvent(QFocusEvent)
+
+    def mouseReleaseEvent(self, qMouseEvent):
+        self.selectInput()
+        return super().mouseReleaseEvent(qMouseEvent)
+
+    def selectInput(self):
+        try:
+            QTimer().singleShot(0, self.selectAll)
+        except AttributeError:
+            QTimer().singleShot(0, self.lineEdit().selectAll)
+
+
+class QRightclickButton(QPushButton):
     rclicked = pyqtSignal()
     lclicked = pyqtSignal()
 
@@ -122,7 +144,7 @@ class RightclickButton(QPushButton):
         super().mouseReleaseEvent(qMouseEvent)
 
 
-class SqButton(QPushButton):
+class QSqButton(QPushButton):
     def __init__(self, *args):
         super().__init__(*args)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -132,7 +154,14 @@ class SqButton(QPushButton):
         return QSize(height, height)
 
 
-class SymbolLineEdit(QLineEdit):
+class QAutoSelectLineEdit(QLineEdit):
+    def mouseReleaseEvent(self, qMouseEvent):
+        if qMouseEvent.button() == Qt.MiddleButton:
+            QTimer().singleShot(0, self.selectAll)
+        return super().mouseReleaseEvent(qMouseEvent)
+
+
+class QSymbolLineEdit(QAutoSelectLineEdit):
     def __init__(self, *args, symbols, **kwargs):
         super().__init__(*args, **kwargs)
         self.symbols = tuple(str(item) for item in symbols)
@@ -226,12 +255,9 @@ class SerialCommPanel(QWidget):
         self.comCombobox = self.newComCombobox()
         self.refreshPortsButton = self.newRefreshPortsButton()
         self.baudCombobox = self.newBaudCombobox()
-        self.bytesizeEdit = self.newDataframeEdit(
-                chars=self.serialInt.BYTESIZES, default=self.serialInt.DEFAULT_CONFIG['bytesize'])
-        self.parityEdit = self.newDataframeEdit(
-                chars=self.serialInt.PARITIES, default=self.serialInt.DEFAULT_CONFIG['parity'])
-        self.stopbitsEdit = self.newDataframeEdit(
-                chars=(1,2), default=self.serialInt.DEFAULT_CONFIG['stopbits'])
+        self.bytesizeEdit = self.newDataFrameEdit(name='bytesize', chars=self.serialInt.BYTESIZES)
+        self.parityEdit = self.newDataFrameEdit(name='parity', chars=self.serialInt.PARITIES)
+        self.stopbitsEdit = self.newDataFrameEdit(name='stopbits', chars=(1, 2))
 
         # Setup
         self.initLayout()
@@ -272,20 +298,27 @@ class SerialCommPanel(QWidget):
 
     def setActions(self):
         new = self.actions.new
-        self.actions.test = new(
-                name='Test', slot=self.testSlot)
-        self.actions.changePort = new(
-                name='Change COM port', slot=lambda: self.changeSerialPort(self.comCombobox.currentText()))
-        self.actions.refreshPorts = new(
-                name='Refresh COM ports', slot=self.updateComPortsAsync, shortcut=QKeySequence("Ctrl+R"))
-        self.actions.changeBaud = new(
-                name='Change COM baudrate', slot=lambda: self.changeBaud(self.baudCombobox.currentText()))
+
+        self.actions.test = new(name='Test',
+                                slot=self.testSlot)
+        self.actions.changePort = new(name='Change COM port',
+                                      slot=lambda: self.changeSerialConfig('port', self.comCombobox.currentText()))
+        self.actions.refreshPorts = new(name='Refresh COM ports',
+                                        slot=self.updateComPortsAsync, shortcut=QKeySequence("Ctrl+R"))
+        self.actions.changeBaud = new(name='Change COM baudrate',
+                                      slot=lambda: self.changeSerialConfig('baudrate', self.baudCombobox.currentText()))
+        self.actions.changeBytesize = new(name='Change COM bytesize',
+                                          slot=lambda: self.changeSerialConfig('bytesize', self.bytesizeEdit.text()))
+        self.actions.changeParity = new(name='Change COM parity',
+                                        slot=lambda: self.changeSerialConfig('parity', self.parityEdit.text()))
+        self.actions.changeStopbits = new(name='Change COM stopbits',
+                                          slot=lambda: self.changeSerialConfig('stopbits', self.stopbitsEdit.text()))
 
     def newCommButton(self):
-        def setName(self: RightclickButton):
+        def setName(self: QRightclickButton):
             if self.parent().commMode == CommMode.Continuous:
                 self.setText('Stop' if self.text() == 'Start' else 'Start')  # TEMP - consider passing parameter
-        this = RightclickButton('Communication', self)
+        this = QRightclickButton('Communication', self)
         this.setName = setName.__get__(this, this.__class__)
         this.rclicked.connect(partial(self.dropStartButtonMenuBelow, this))
         this.lclicked.connect(self.commButtonClicked)
@@ -306,18 +339,18 @@ class SerialCommPanel(QWidget):
             action.triggered.connect(partial(setattr, self, 'commMode', CommMode[mode]))
             this.addAction(action)
             if mode == self.commMode.name: action.setChecked(True)
-        actionGroup.triggered.connect(lambda x: log.debug(f"Communication mode set: {x.text()}"))
         actionGroup.triggered.connect(self.changeCommMode)
         this.group = actionGroup
         return this
 
     def newCommOptionsButton(self):
-        this = SqButton('▼', self)  # TODO: increases height with '🞃'
+        this = QSqButton('▼', self)  # TODO: increases height with '🞃'
         this.clicked.connect(partial(self.dropStartButtonMenuBelow, self.commButton))
         return this
 
     def newComCombobox(self):
         this = QComboBox(parent=self)
+        this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
         # CONSIDER: ▼ adjust combobox drop-down size when update is performed with unfolded ports list
@@ -328,7 +361,7 @@ class SerialCommPanel(QWidget):
         return this
 
     def newRefreshPortsButton(self):
-        this = SqButton(self)
+        this = QSqButton(self)
         this.clicked.connect(self.actions.refreshPorts.trigger)
         this.setIcon(QIcon(r"D:\GLEB\Python\refresh-gif-2.gif"))  # TODO: manage ui resources
         this.setIconSize(this.sizeHint() - QSize(10,10))
@@ -340,6 +373,7 @@ class SerialCommPanel(QWidget):
         # TODO: adjust size to fit MAX_DIGITS digits
         MAX_DIGITS = 7
         this = QComboBox(parent=self)
+        this.setLineEdit(QAutoSelectLineEdit())
         this.maxChars = MAX_DIGITS
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
@@ -355,21 +389,22 @@ class SerialCommPanel(QWidget):
         this.setValidator(QRegexValidator(QRegex(rf"[1-9]{{1}}[0-9]{{0,{MAX_DIGITS-1}}}"), this))
         return this
 
-    def newDataframeEdit(self, chars, default):
+    def newDataFrameEdit(self, name, chars):
         chars = tuple(str(ch) for ch in chars)
-        this = SymbolLineEdit("X", self, symbols=chars)
+        this = QSymbolLineEdit("X", self, symbols=chars)
         this.setAlignment(Qt.AlignCenter)
         this.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        this.setText(str(default))
+        this.setText(str(self.serialInt.DEFAULT_CONFIG[name]))
         this.textEdited.connect(lambda text: this.setText(text.upper()))
-        constrainToExistingRegex = QRegex('|'.join(chars)+r'/I')
+        constrainToExistingRegex = QRegex('|'.join(chars))
         constrainToExistingRegex.setPatternOptions(QRegex.CaseInsensitiveOption)
         this.setValidator(QRegexValidator(constrainToExistingRegex))
+        this.editingFinished.connect(getattr(self.actions, f'change{name.capitalize()}').trigger)
         # this.setMaximumSize(22, 22)
         return this
 
     def newTestButton(self):
-        this = RightclickButton('Test', self)
+        this = QRightclickButton('Test', self)
         this.clicked.connect(lambda: print("click on button!"))
         this.lclicked.connect(self.actions.test.trigger)
         return this
@@ -380,7 +415,7 @@ class SerialCommPanel(QWidget):
     def changeCommMode(self, action: Union[QAction, CommMode]):
         if isinstance(action, CommMode): mode = action
         else: mode = action.mode
-        log.debug(f"Changing communication mode to {mode}")
+        log.debug(f"Changing communication mode to {mode}...")
 
         button = self.commButton
         self.commMode = mode
@@ -395,6 +430,7 @@ class SerialCommPanel(QWidget):
             self.commButtonClicked = self.manualCommBinding
             button.setText('Send')
         else: raise AttributeError(f"Unsupported mode '{mode.name}'")
+        log.info(f"Communication mode ——► {mode.name}")
 
     @staticmethod
     def getComPortsList():
@@ -431,7 +467,7 @@ class SerialCommPanel(QWidget):
         self.refreshPortsButton.anim.stop()
         self.refreshPortsButton.anim.jumpToFrame(0)
         self.comUpdaterThread = None
-        log.debug(f"Updating com ports: DONE")
+        log.debug(f"Updating com ports ——► DONE")
 
     def updateComCombobox(self, ports: List[ComPortInfo]):
         log.debug("Refreshing com ports combobox...")
@@ -451,14 +487,32 @@ class SerialCommPanel(QWidget):
         else:
             log.debug("Com ports refresh - no changes")
 
-    def changeSerialPort(self, newPort:str):
+    def changeSerialConfig(self, setting: str, value):
+        if value == '':
+            log.debug(f"Serial {setting} is not chosen — cancelling")
+            return
+        if setting == 'port': value = f'COM{value}'
+        interface = self.serialInt
+        if value.isdecimal(): value = int(value)
+        currValue = getattr(interface, setting, None)
+        if value == currValue:
+            log.debug(f"{setting.capitalize()}={value} is already set — cancelling")
+            return
+        try:
+            with interface.reopen():
+                setattr(interface, setting, value)
+        except SerialError as e: log.error(e)
+        else: log.info(f"Serial {setting} ——► {value}")
+
+    @legacy
+    def changeSerialPort(self, newPort: str):
         # newPort = self.sender().data()
         if newPort == '':
-            log.debug(f"Serial port is not chosen - cancelling")
+            log.debug(f"Serial port is not chosen — cancelling")
             return
         currPort = self.serialInt.port.strip('COM') if self.serialInt.port is not None else None
         if newPort == currPort:
-            log.debug(f"Serial port {currPort} is already set - cancelling")
+            log.debug(f"Serial port {currPort} is already set — cancelling")
             return
         else: newPort = 'COM' + newPort
         log.debug(f"Changing serial port from {currPort} to {newPort}...")
@@ -469,6 +523,7 @@ class SerialCommPanel(QWidget):
             log.error(e)
         else: log.info(f"Serial port ––► {newPort}")
 
+    @legacy
     def changeBaud(self, newBaud):
         # newBaud = self.sender().data()
         log.debug(f"Changing serial baudrate to {newBaud}...")
