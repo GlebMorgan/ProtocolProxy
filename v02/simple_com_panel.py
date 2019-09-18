@@ -6,20 +6,21 @@ from random import randint
 import sys
 from threading import Thread
 from time import sleep
-from typing import Union, Callable, NewType, Tuple, List
+from typing import Union, Callable, NewType, Tuple, List, Optional
 
 from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer, \
     QRegularExpression as QRegex, QEvent
 from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence, QIntValidator, \
     QRegularExpressionValidator as QRegexValidator
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
-    QToolButton, QSizePolicy, QLineEdit, QActionGroup
+    QToolButton, QSizePolicy, QLineEdit, QActionGroup, QGraphicsDropShadowEffect
 
 from Utils import Logger, legacy, formatList, ignoreErrors
 from Transceiver import SerialTransceiver, SerialError
 from serial.tools.list_ports_common import ListPortInfo as ComPortInfo
 from serial.tools.list_ports_windows import comports
 
+from src.Experiments.colorer import Colorer, DisplayColor
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 # TEMP TESTME TODO FIXME NOTE CONSIDER
@@ -39,7 +40,6 @@ from serial.tools.list_ports_windows import comports
 
 # Default layout spacing = 5
 # Default ContentsMargins = 12
-
 
 log = Logger("ComPanel")
 
@@ -83,35 +83,6 @@ class QKeyModifierEventFilter(QObject):
         return super().eventFilter(qObject, qEvent)
 
 
-class Chain:
-    def __init__(self, obj):
-        self.target = obj
-        self.methodname = None
-
-    def __getitem__(self, item: str):
-        """ getattribute() for internal use """
-        return object.__getattribute__(self, item)
-
-    def __getattribute__(self, item):
-        if item in ('ok', 'end', 'apply'):
-            return self['target']
-        if item.startswith('__') and item.endswith('__'):
-            return self[item]
-        self.methodname = item
-        method = getattr(self['target'], item)
-        if not hasattr(method, '__call__'):
-            raise TypeError(f"'{type(method).__name__}' object '{method}' is not callable")
-        return self
-
-    def __call__(self, *args, **kwargs):
-        # if self['method'].__func__(self['target'], *args, **kwargs) is not None:
-        if getattr(self['target'], self['methodname'])(*args, **kwargs) is not None:
-            raise RuntimeError(f"Method '{self['methodname']}' returned non-None value, cannot use Chain")
-        return self
-
-    def __repr__(self): return f"Chain wrapper of {self['target']} object at {hex(id(self))}"
-
-
 class QDataAction(QAction):
     def triggerWithData(self, data):
         self.setData(data)
@@ -143,7 +114,6 @@ class WidgetActions(dict):
             this.setShortcutContext(context)
         self.owner.addAction(this)
         self[name] = this
-        log.debug(f"Action '{name}' created")
         return this
 
     def __getattr__(self, item):
@@ -260,7 +230,7 @@ class SerialCommPanel(QWidget):
         self.actionList = super().actions
         self.comUpdaterThread: QThread = None
         self.commMode: CommMode = CommMode.Continuous
-        self.actions: dict = WidgetActions(self)
+        self.actions = WidgetActions(self)
         self.setActions()
 
         # Bindings
@@ -287,7 +257,7 @@ class SerialCommPanel(QWidget):
         self.updateComPortsAsync()
 
         self.setFixedSize(self.sizeHint())  # CONSIDER: SizePolicy is not working
-        self.setStyleSheet('background-color: rgb(200, 255, 200)')
+        # self.setStyleSheet('background-color: rgb(200, 255, 200)')
 
     def initLayout(self):
         spacing = self.font().pointSize()
@@ -324,17 +294,19 @@ class SerialCommPanel(QWidget):
         self.actions.test = new(name='Test',
                                 slot=self.testSlot)
         self.actions.changePort = new(name='Change COM port',
-                                      slot=lambda: self.changeSerialConfig('port', self.comCombobox.currentText()))
+                                      slot=lambda: self.changeSerialConfig('port', self.comCombobox))
         self.actions.refreshPorts = new(name='Refresh COM ports',
                                         slot=self.updateComPortsAsync, shortcut=QKeySequence("Ctrl+R"))
         self.actions.changeBaud = new(name='Change COM baudrate',
-                                      slot=lambda: self.changeSerialConfig('baudrate', self.baudCombobox.currentText()))
+                                      slot=lambda: self.changeSerialConfig('baudrate', self.baudCombobox))
         self.actions.changeBytesize = new(name='Change COM bytesize',
-                                          slot=lambda: self.changeSerialConfig('bytesize', self.bytesizeEdit.text()))
+                                          slot=lambda: self.changeSerialConfig('bytesize', self.bytesizeEdit))
         self.actions.changeParity = new(name='Change COM parity',
-                                        slot=lambda: self.changeSerialConfig('parity', self.parityEdit.text()))
+                                        slot=lambda: self.changeSerialConfig('parity', self.parityEdit))
         self.actions.changeStopbits = new(name='Change COM stopbits',
-                                          slot=lambda: self.changeSerialConfig('stopbits', self.stopbitsEdit.text()))
+                                          slot=lambda: self.changeSerialConfig('stopbits', self.stopbitsEdit))
+
+        log.debug(f"Actions:\n{formatList(action.text() for action in self.actions.values())}")
 
     def newCommButton(self):
         def setName(this: QRightclickButton, mode=self.commMode):
@@ -386,11 +358,11 @@ class SerialCommPanel(QWidget):
         this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
-        this.setStyleSheet('background-color: rgb(255, 200, 255)')
-        # Note: .validator is set in updateComCombobox()
+        # this.lineEdit().setStyleSheet('background-color: rgb(200, 255, 200)')
         this.setFixedWidth(QFontMetrics(self.font()).horizontalAdvance('000') + self.height())
         this.lineEdit().editingFinished.connect(self.actions.changePort.trigger)
         this.setToolTip("COM port")
+        # NOTE: .validator and .colorer are set in updateComCombobox()
         return this
 
     def newRefreshPortsButton(self):
@@ -411,7 +383,7 @@ class SerialCommPanel(QWidget):
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
         this.setSizeAdjustPolicy(this.AdjustToContents)
-        this.setStyleSheet('background-color: rgb(200, 255, 255)')
+        # this.lineEdit().setStyleSheet('background-color: rgb(200, 200, 255)')
         items = self.serialInt.BAUDRATES[self.serialInt.BAUDRATES.index(9600): self.serialInt.BAUDRATES.index(921600)+1]
         this.addItems((str(num) for num in items))
         this.setMaxVisibleItems(len(items))
@@ -420,6 +392,7 @@ class SerialCommPanel(QWidget):
         log.debug(f"BaudCombobox: max items = {this.maxVisibleItems()}")
         this.lineEdit().editingFinished.connect(self.actions.changeBaud.trigger)
         this.setValidator(QRegexValidator(QRegex(rf"[1-9]{{1}}[0-9]{{0,{MAX_DIGITS-1}}}"), this))
+        this.colorer = Colorer(widget=this, base=this.lineEdit())
         this.setToolTip("Baudrate (speed)")
         return this
 
@@ -431,7 +404,9 @@ class SerialCommPanel(QWidget):
         this.setText(str(self.serialInt.DEFAULT_CONFIG[name]))
         this.textEdited.connect(lambda text: this.setText(text.upper()))
         this.setValidator(QRegexValidator(QRegex('|'.join(chars), options=QRegex.CaseInsensitiveOption)))
+        this.colorer = Colorer(this)
         this.editingFinished.connect(getattr(self.actions, f'change{name.capitalize()}').trigger)
+        # this.setStyleSheet('background-color: rgb(255, 200, 200)')
         this.setToolTip(name.capitalize())
         return this
 
@@ -498,38 +473,56 @@ class SerialCommPanel(QWidget):
             combobox.contents = newPortNumbers
             currentComPortsRegex = QRegex('|'.join(combobox.contents), options=QRegex.CaseInsensitiveOption)
             combobox.setValidator(QRegexValidator(currentComPortsRegex))
+            combobox.colorer = Colorer(widget=combobox, base=combobox.lineEdit())  # TESTME: colorer
+            combobox.validator().changed.connect(lambda: log.warning("Validator().changed() triggered"))  # TEMP
             if combobox.view().isVisible():
                 combobox.hidePopup()
                 combobox.showPopup()
+            combobox.colorer.blink(DisplayColor.Blue)
             log.info(f"COM ports refreshed: {', '.join(f'COM{port}' for port in newPortNumbers)}")
         else:
             log.debug("Com ports refresh - no changes")
 
-    def changeSerialConfig(self, setting: str, value):
-        if setting == 'port' and self.comCombobox.view().hasFocus(): return
+    def changeSerialConfig(self, setting: str, widget: Union[QComboBox, QLineEdit]) -> Optional[bool]:
+        # FIXME: when caught error on open new port, lineEdit remains red even when port is made available
+        try: value = widget.currentText()
+        except AttributeError: value = widget.text()
+        if setting == 'port' and self.comCombobox.view().hasFocus(): return None
         if value == '':
             log.debug(f"Serial {setting} is not chosen — cancelling")
-            return
+            return None
         if setting == 'port': value = f'COM{value}'
         interface = self.serialInt
         if value.isdecimal(): value = int(value)
         currValue = getattr(interface, setting, None)
         if value == currValue:
             log.debug(f"{setting.capitalize()}={value} is already set — cancelling")
-            return
+            return None
         try:
-            with interface.reopen():
-                setattr(interface, setting, value)
-        except SerialError as e: log.error(e)
-        else: log.info(f"Serial {setting} ——► {value}")
+            setattr(interface, setting, value)
+        except SerialError as e:
+            log.error(e)
+            widget.colorer.setBaseColor(DisplayColor.Red)
+            return False
+        else:
+            log.info(f"Serial {setting} ——► {value}")
+            widget.colorer.setBaseColor(DisplayColor.Background)
+            widget.colorer.blink(DisplayColor.Green)
+            return True
 
     def testSlot(self, par=...):
         if par is not ...: print(f"Par: {par}")
         print(f"Serial int: {self.serialInt}")
         print(f"Communication mode: {self.commMode.name}")
-        self.testButton.setProperty("testField", False)
-        self.testButton.setStyleSheet(self.testButton.styleSheet())
+        # self.testButton.setProperty("testField", False)
+        # self.testButton.setStyleSheet(self.testButton.styleSheet())
         # self.comCombobox.setStyleSheet('QComboBox:hover {color: hsv(120, 255, 255)}')
+        effect = QGraphicsDropShadowEffect()
+        effect.setOffset(0)
+        effect.setBlurRadius(15)
+        effect.setColor(Qt.green)
+        QTimer().singleShot(500, lambda: self.testButton.setGraphicsEffect(effect))
+        QTimer().singleShot(600, lambda: self.testButton.setGraphicsEffect(None))
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
@@ -557,8 +550,7 @@ class SerialCommPanel(QWidget):
         else: newPort = 'COM' + newPort
         log.debug(f"Changing serial port from {currPort} to {newPort}...")
         try:
-            with self.serialInt.reopen():
-                self.serialInt.port = newPort
+            self.serialInt.port = newPort
         except SerialError as e:
             log.error(e)
         else: log.info(f"Serial port ––► {newPort}")
