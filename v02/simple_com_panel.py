@@ -1,5 +1,6 @@
 from __future__ import annotations as annotations_feature
 
+from contextlib import contextmanager
 from enum import Enum
 from functools import partial
 from random import randint
@@ -11,9 +12,9 @@ from typing import Union, Callable, NewType, Tuple, List, Optional
 from PyQt5.QtCore import Qt, QStringListModel, pyqtSignal, QPoint, QSize, QObject, QThread, pyqtSlot, QTimer, \
     QRegularExpression as QRegex, QEvent
 from PyQt5.QtGui import QFont, QFontMetrics, QIcon, QMovie, QColor, QKeySequence, QIntValidator, \
-    QRegularExpressionValidator as QRegexValidator
+    QRegularExpressionValidator as QRegexValidator, QPalette
 from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QComboBox, QAction, QPushButton, QMenu, QLabel, \
-    QToolButton, QSizePolicy, QLineEdit, QActionGroup, QGraphicsDropShadowEffect
+    QToolButton, QSizePolicy, QLineEdit, QActionGroup, QGraphicsDropShadowEffect, QGraphicsBlurEffect
 
 from Utils import Logger, legacy, formatList, ignoreErrors
 from Transceiver import SerialTransceiver, SerialError
@@ -34,6 +35,9 @@ from src.Experiments.colorer import Colorer, DisplayColor
 # TODO: Keyboard-layout independence option
 
 # ✓ Do not accept and apply value in combobox's lineEdit when drop-down is triggered
+
+# CONSIDER: combine CommButton and CommModeDropDown in one button
+#     (use .setMouseTracking() to control what subwidget to activate)
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
@@ -414,8 +418,8 @@ class SerialCommPanel(QWidget):
         this = QRightclickButton('Test', self)
         this.clicked.connect(lambda: print("click on button!"))
         this.lclicked.connect(self.actions.test.trigger)
-        this.setProperty('testField', True)
-        this.setStyleSheet('*[testField="false"] {border-width: 2px; border-color: red;}')
+        # this.setProperty('testField', True)
+        # this.setStyleSheet('*[testField="false"] {border-width: 2px; border-color: red;}')
         this.setToolTip("Test")
         return this
 
@@ -463,14 +467,14 @@ class SerialCommPanel(QWidget):
         currentPort = combobox.currentText()
         newPortNumbers = tuple((port.device.strip('COM') for port in ports))
         if combobox.contents != newPortNumbers:
-            combobox.blockSignals(True)
-            combobox.clear()
-            combobox.addItems(newPortNumbers)
-            combobox.blockSignals(False)
-            for i, port in enumerate(ports):
-                combobox.setItemData(i, port.description, Qt.ToolTipRole)
-            combobox.setCurrentIndex(combobox.findText(currentPort))
-            combobox.contents = newPortNumbers
+            with self.preservedSelection(combobox):
+                with self.blockedSignals(combobox):
+                    combobox.clear()
+                    combobox.addItems(newPortNumbers)
+                for i, port in enumerate(ports):
+                    combobox.setItemData(i, port.description, Qt.ToolTipRole)
+                combobox.setCurrentIndex(combobox.findText(currentPort))
+                combobox.contents = newPortNumbers
             currentComPortsRegex = QRegex('|'.join(combobox.contents), options=QRegex.CaseInsensitiveOption)
             combobox.setValidator(QRegexValidator(currentComPortsRegex))
             combobox.colorer = Colorer(widget=combobox, base=combobox.lineEdit())  # TESTME: colorer
@@ -478,7 +482,7 @@ class SerialCommPanel(QWidget):
             if combobox.view().isVisible():
                 combobox.hidePopup()
                 combobox.showPopup()
-            combobox.colorer.blink(DisplayColor.Blue)
+            combobox.colorer.blink(DisplayColor.HighlightBlue)
             log.info(f"COM ports refreshed: {', '.join(f'COM{port}' for port in newPortNumbers)}")
         else:
             log.debug("Com ports refresh - no changes")
@@ -501,30 +505,49 @@ class SerialCommPanel(QWidget):
         try:
             setattr(interface, setting, value)
         except SerialError as e:
+            setattr(interface, setting, None)
             log.error(e)
             widget.colorer.setBaseColor(DisplayColor.Red)
             return False
         else:
             log.info(f"Serial {setting} ——► {value}")
-            widget.colorer.setBaseColor(DisplayColor.Background)
-            widget.colorer.blink(DisplayColor.Green)
+            widget.colorer.resetBaseColor()
+            widget.colorer.blink(DisplayColor.HighlightGreen)
             return True
+
+    @contextmanager
+    def preservedSelection(self, widget: QWidget):
+        try: textEdit = widget.lineEdit()
+        except AttributeError: textEdit = widget
+        try:
+            currentSelection = (textEdit.selectionStart(), len(textEdit.selectedText()))
+        except AttributeError:
+            raise ValueError(f"Widget {widget.__class__} seems to not support text selection")
+
+        yield currentSelection
+
+        textEdit.setSelection(*currentSelection)
+
+    @contextmanager
+    def blockedSignals(self, qObject: QObject):
+        qObject.blockSignals(True)
+        yield
+        qObject.blockSignals(False)
 
     def testSlot(self, par=...):
         if par is not ...: print(f"Par: {par}")
         print(f"Serial int: {self.serialInt}")
         print(f"Communication mode: {self.commMode.name}")
-        # self.testButton.setProperty("testField", False)
-        # self.testButton.setStyleSheet(self.testButton.styleSheet())
-        # self.comCombobox.setStyleSheet('QComboBox:hover {color: hsv(120, 255, 255)}')
-        effect = QGraphicsDropShadowEffect()
-        effect.setOffset(0)
-        effect.setBlurRadius(15)
-        effect.setColor(Qt.green)
-        QTimer().singleShot(500, lambda: self.testButton.setGraphicsEffect(effect))
-        QTimer().singleShot(600, lambda: self.testButton.setGraphicsEffect(None))
+        self.parityEdit.colorer.setBaseColor(QColor(255,127,127))
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
+
+    def testButtonGreen(self):
+        palette = self.testButton.palette()
+        oldPalette = QPalette(palette)
+        QTimer().singleShot(500, lambda: self.testButton.setPalette(oldPalette))
+        palette.setColor(QPalette.Button, QColor('limegreen'))
+        self.testButton.setPalette(palette)
 
     @legacy
     def updateComPorts(self):
