@@ -12,8 +12,7 @@ from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction, QLineEdit
 from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
-from logger import Logger
-from utils import memoLastPosArgs
+from Utils import Logger, memoLastPosArgs
 
 from app import App
 

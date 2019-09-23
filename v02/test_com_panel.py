@@ -2,10 +2,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QRegExp, QTimer, QThread
 from PyQt5.QtGui import QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QAction
 from PyQt5Utils import ColoredComboBox, NotifyingValidator, Colorer
-from context_proxy import Context
-from logger import Logger
 from serial.tools.list_ports import comports
-from utils import memoLastPosArgs, threaded, Dummy
+from Utils import memoLastPosArgs, threaded, Dummy, Logger, Context
 
 
 log = Logger("ComPanel")

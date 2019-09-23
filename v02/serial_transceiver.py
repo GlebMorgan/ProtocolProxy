@@ -2,9 +2,8 @@ import struct
 from functools import wraps
 
 import serial
-from checksums import rfc1071
-from logger import Logger
-from utils import alias, bytewise, VerboseError
+from Utils import Logger, alias, bytewise, VerboseError
+from Transceiver import rfc1071
 
 log = Logger("Serial")
 slog = Logger("Packets")
@@ -145,7 +144,7 @@ class PelengTransceiver(SerialTransceiver):
             if (not self.addLRC):
                 return sendPacketFunction
             else:
-                from checksums import lrc
+                from Transceiver.checksums import lrc
 
                 @wraps(sendPacketFunction)
                 def sendPacketWrapper(wrappee_self, msg, *args, **kwargs):

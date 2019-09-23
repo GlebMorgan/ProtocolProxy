@@ -8,8 +8,7 @@ from os.path import abspath, dirname, isfile, join as joinpath, isdir
 from sys import exit as sys_exit
 from typing import Union
 
-from logger import Logger
-from utils import bytewise, castStr
+from Utils import Logger, bytewise, castStr
 
 from config_loader import ConfigLoader
 from device import Device, DataInvalidError
