@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from itertools import compress
 from os import linesep
-from os.path import join as joinpath, dirname, abspath, isdir
+from os.path import join as joinpath, dirname, abspath, isdir, expandvars as envar
 from shutil import copyfile
 from typing import Dict, Type, Set
 
-from logger import Logger
+from Utils import Logger, formatDict
 from ruamel.yaml import YAML, YAMLError
-from utils import formatDict
+
+
+# CONSIDER: Constrain assigning common settings to ConfigLoader attrs (like .filePath and .loader), not child class
+
 
 log = Logger("Config")
 
@@ -20,58 +23,75 @@ CONFIGS_DICT: Dict[str, dict] = {}
 class ConfigLoader:
     """ When subclassed, stores all UPPERCASE (of which isupper() returns True)
         class attrs as dict of categories with config parameters
-        and saves/loads them to/from .yaml file """
+        and saves/loads them to/from .yaml file
+    """
 
-    # CONSIDER: Constrain assigning common settings to ConfigLoader attrs (like .filePath and .loader), not child class
+    # ▼ Config is stored in APPDATA.PelengTools by default
+    #   Should not be used as complete config file path; application subdirectory needs to be appended
+    CONFIG_FILE_BASE_PATH = joinpath(envar('%APPDATA%'), '.PelengTools')
 
-    configFileName: str = 'config.yaml'
-    filePath: str = joinpath(dirname(abspath(__file__)), configFileName)
+    # ▼ Config file will be created automatically in case no one was found on specified path
+    AUTO_CREATE_CONFIG_FILE = True
+
+    filename: str = 'config.yaml'
+    path: str = None
     loader = YAML(typ='safe')
     loader.default_flow_style = False
 
-    # initialized by successors:
+    # Initialized by successors:
     loaded = False
     ignoreUpdates = False
     section: str = None
 
     @classmethod
-    def load(cls, section: str, path: str = None):
+    def load(cls, section: str, app: str = None):
         """ Update class with config params retrieved from config file, if possible """
 
         if cls is ConfigLoader:
-            raise NotImplementedError("ConfigLoader is intended to be used by subclassing")
+            raise NotImplementedError(f"{cls.__name__} is intended to be used by subclassing")
+
+        if app is not None:
+            cls.path = joinpath(cls.CONFIG_FILE_BASE_PATH, app)
+        elif cls.path is None:
+            raise RuntimeError("Application config directory path is not specified. "
+                               f"{cls.__mro__[-2].__name__}.path or {cls.__name__}.path should be provided")
+
+        if not isdir(cls.path):
+            log.error(f"Application config path is invalid directory: {cls.path}")
+            return cls._useDefaultConfig_()
+        else:
+            cls.path = joinpath(cls.path, cls.filename)
+
+        log.info(f"Fetching config for '{section}'...")
 
         cls.section = section
         CONFIG_CLASSES.add(cls)
 
-        if cls._validateConfigFilePath_(path):
-            cls.filePath = joinpath(path, cls.configFileName)
-
-        log.debug(f"Config file path: {cls.filePath}")
-
         if not CONFIGS_DICT:  # => call ConfigLoader for the first time => load config from .yaml file
+            log.debug(f"Loading config for '{cls.section}' from {cls.path}...")
             if not cls._loadFromFile_():  # => non existent or empty file => no profit, use defaults
-                return  # ◄ use class attrs when querying config params
+                return cls._useDefaultConfig_()
 
         try:
             configFileDict = CONFIGS_DICT[cls.section].copy()
         except KeyError:
-            log.warning(f"Cannot find section {cls.section} in config file. Creating new one with defaults.")
+            log.warning(f"Cannot find section '{cls.section}' in config file. Creating new one with defaults.")
             cls._addCurrentSection_()
-            return  # ◄ use class attrs when querying config params
+            return cls._useDefaultConfig_()
 
         for parName in cls.params():
             currPar = getattr(cls, parName)
             try: newPar = configFileDict.pop(parName)
             except KeyError:
-                log.error(f"Parameter {parName}: not found in config file {cls.configFileName}")
+                log.error(f"Parameter '{parName}': not found in config file {cls.filename}")
+                continue
             else:
                 if currPar is not None and newPar is not None:
                     # cast to current type
                     try: newPar = type(currPar)(newPar)
                     except (ValueError, TypeError) as e:
-                        log.error(f"Parameter {parName}: cannot convert '{newPar}' "
-                                  f"to type '{type(currPar).__name__}': {e}")
+                        log.error(f"Parameter '{parName}': cannot convert '{newPar}' "
+                                  f"to type '{type(currPar).__name__}' ––► {e}")
                         continue
                 setattr(cls, parName, newPar)
         if len(configFileDict) != 0:
@@ -81,14 +101,15 @@ class ConfigLoader:
 
         cls.loaded = True
         log.info(f"Config '{cls.section}' loaded, {len(tuple(cls.params()))} items")
-        log.debug(f"Config {cls.section}: {formatDict({name: getattr(cls, name) for name in cls.params()})}")
+        log.debug(f"Config '{cls.section}': {formatDict({name: getattr(cls, name) for name in cls.params()})}")
 
     @classmethod
-    def update(cls):  # CONSIDER: (True, 2, 3.0) == (1,2,3) as well as [1,2] != (1,2) => need to compare types as well
+    def update(cls):
         """ Update internal config storage with actual class attrs (if .ignoreUpdates is False)
             Returns True if actual config has been changed, False otherwise, None if configured to ignore updates
-            May be used to save current class config only: CFG.save(CFG.update()) """
-
+            May be used to save current class config only: CFG.save(CFG.update())
+            CONSIDER: (True, 2, 3.0) == (1,2,3) as well as [1,2] != (1,2) => need to compare types as well
+        """
         assert CONFIGS_DICT
         if cls.ignoreUpdates:
             log.info(f"Section '{cls.section}': updates ignored by request")
@@ -101,19 +122,30 @@ class ConfigLoader:
         return storedConfig != current_config
 
     @classmethod
-    def save(cls, forceSave=None):
+    def save(cls, force=None):
         """ Save all config sections to config file if any have changed or if forced
-            NOTE: Call this method before app exit """
+            NOTE: Call this method before app exit
+        """
 
-        # ▼ skip save on False when necessity of save is unknown (ex: CFG.save(CFG.update()) )
-        if forceSave is False: return
+        if cls is ConfigLoader:
+            raise NotImplementedError(f"{cls.__name__} is intended to be used by subclassing")
 
-        # ▼ add 'return' here if no config file creation is required in case no valid one was found
-        if not CONFIG_CLASSES: log.warning("No informative config file found")
+        # ▼ Skip save on False. Used when necessity of save is acquired dynamically (ex: CFG.save(CFG.update()))
+        if force is False:
+            log.debug(f"Section '{cls.section}': Save skipped (no changes)")
+            return False
 
-        if not forceSave:
-            # Not forced to save => update config dict with new config; disrupt save to file if no changes took place
-            configChanged = (cls.update() for cls in CONFIG_CLASSES)
+        if not CONFIG_CLASSES:
+            assert False, "what should I log here?"
+            if AUTO_CREATE_CONFIG_FILE is False:
+                log.debug("{cls.__name__} is configured not to create initial config file")
+                return False
+
+        sections = (configCls.section for configCls in CONFIG_CLASSES)
+
+        if not force:
+            log.info(f"Updating config for sections {', '.join(sections)}")
+            configChanged = (configCls.update() for configCls in CONFIG_CLASSES)
             # ▼ the iteration order on the SET is consistent within single execution run, so results will be aligned
             updatedConfigSections = tuple(configCls.section for configCls in compress(CONFIG_CLASSES, configChanged))
             newSections = cls._fileUpdateSections_()
@@ -121,17 +153,19 @@ class ConfigLoader:
                 log.debug(f"Config updated for sections: {', '.join(set(updatedConfigSections + newSections))}")
             else:
                 log.info("Config does not change, save skipped")
-                return
+                return False
+        else:
+            log.debug(f"Force saving config for sections {', '.join(sections)}")
 
-        try:
-            copyfile(cls.filePath, cls.filePath + '.bak')
-        except OSError as e:
-            log.error(f"Failed to create backup config file: {e}")
+        log.debug(f"Creating backup config file {cls.filename + '.bak'}")
+        try: copyfile(cls.path, cls.path + '.bak')
+        except OSError as e: log.error(f"Failed to create backup config file: {e}")
 
+        log.debug(f"Saving config to file {cls.filename}")
         try:
-            with open(cls.filePath, 'w') as configFile:
+            with open(cls.path, 'w') as configFile:
                 cls.loader.dump(CONFIGS_DICT, configFile)
-                log.info(f"Config saved, {len(CONFIGS_DICT)} sections")
+                log.info(f"Config saved for sections: {', '.join(sections)}")
         except (OSError, YAMLError) as e:
             log.error(f"Failed to save configuration file:{linesep}{e}")
 
@@ -139,18 +173,25 @@ class ConfigLoader:
     def revert(cls):
         """ Restore config file from backup, if such is present """
 
-        try: copyfile(cls.filePath + '.bak', cls.filePath)
+        log.debug(f"Reverting config from {cls.path + '.bak'}...")
+
+        try: copyfile(cls.path + '.bak', cls.path)
         except OSError as e:
             log.error(f"Reverting from backup failed: {e}")
             return False
         else:
-            log.info("Reverted from backup")
+            log.info("Reverted from backup successfully")
             return True
 
     @classmethod
     def params(cls):
         """ Iterate through all class attr names that are treated as config params """
-        yield from (attrName for attrName in vars(cls) if attrName.isupper())
+        yield from (attrName for attrName in vars(cls).keys() if attrName.isupper())
+
+    @classmethod
+    def _useDefaultConfig_(cls):
+        # Just return and use class attrs when querying config params
+        log.info(f"Using default config for '{cls.section}': {formatDict(*cls.params())}")
 
     @classmethod
     def _loadFromFile_(cls) -> bool:
@@ -158,28 +199,30 @@ class ConfigLoader:
             return boolean value = failed/succeeded """
 
         try:
-            with open(cls.filePath) as configFile:
+            with open(cls.path) as configFile:
                 # ▼ expect dict of config dicts in config file
                 configDict = cls.loader.load(configFile)
-                assert isinstance(configDict, dict), (f"Config loader {cls.loader.__name__} "
-                                                      f"returned invalid result type: {type(configDict)}")
+                assert isinstance(configDict, dict), \
+                    (f"Config loader {cls.loader.__name__} returned invalid result type: {type(configDict)}")
                 if configDict is None:
                     log.warning(f"Config file is empty")
                     cls._addCurrentSection_()
                     return False
                 else:
-                    log.debug(f"CONFIGS DICT: {formatDict(configDict)}")
                     CONFIGS_DICT.update(configDict)
+                    log.debug(f"Config for {cls.section} loaded: {formatDict(configDict)}")
                     return True  # succeeded loading from file
         except YAMLError as e:
             log.error(f"Failed to parse configuration file:{linesep}{e}")
         except FileNotFoundError:
-            log.warning(f"Config file {cls.configFileName} not found")
+            log.warning(f"Config file {cls.filename} not found")
 
+        # If failed loading from file:
         if (cls.revert()):
+            log.debug(f"Loading backup config for {cls.section}...")
             return cls._loadFromFile_()
         else:
-            log.info("Using default config")
+            log.info(f"Creating new config section: {cls.section}...")
             cls._addCurrentSection_()
             return False
 
@@ -194,14 +237,14 @@ class ConfigLoader:
     @classmethod
     def _fileUpdateSections_(cls): return tuple(cfgCls.section for cfgCls in CONFIG_CLASSES if not cfgCls.loaded)
 
-    @staticmethod
-    def _validateConfigFilePath_(path: str):
-        if path is None:
-            return None  # use default config file path (project path)
-        elif not isdir(path):
-            log.error(f"Invalid directory: {path}. Defaults will be used")
-            return False
-        return True
+    # @staticmethod
+    # def _validateConfigFilePath_(path: str):
+    #     if path is None:
+    #         return None  # use default config file path (project path)
+    #     elif not isdir(path):
+    #         log.error(f"Invalid directory: {path}. Default config will be used")
+    #         return False
+    #     return True
 
 
 if __name__ == '__main__':
@@ -220,7 +263,7 @@ if __name__ == '__main__':
         s = 'service2'
 
 
-    ConfigLoader.configFileName = 'testconfig.yaml'
+    ConfigLoader.filename = 'testconfig.yaml'
     wd = r"D:\GLEB\Python\ProtocolProxy\v02"
 
     print(f"TestConfig dir: {formatDict(vars(TestConfig))}")
