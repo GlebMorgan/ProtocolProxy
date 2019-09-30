@@ -1,22 +1,34 @@
-from typing import MutableMapping, Callable
+from typing import MutableMapping, Callable, NewType, List
+
+Handler = NewType('Handler', Callable)
 
 
 class Notifier:
-    __slots__ = 'events',
+    events: MutableMapping[str, List[Handler]] = {}
 
-    def __init__(self):
-        self.events: MutableMapping[str, list] = {}
-
-    def notify(self, event: str, *args, **kwargs):
+    @classmethod
+    def notify(cls, event: str, *args, **kwargs):
+        """ Notify handlers about `event`. Calls each handler with specified *args & **kwargs
+            Return True if event already exists, False if event is mentioned for the first time
+        """
         try:
-            handlers = self.events[event]
+            handlers: List[Handler] = cls.events[event]
         except KeyError:
-            raise AssertionError(f"Notifier.notify() is called on non-existing event '{event}'")
-        for handler in handlers: handler(*args, **kwargs)
+            cls.events[event] = []
+            return False
+        else:
+            for handler in handlers: handler(*args, **kwargs)
+            return True
 
-    def addHandler(self, event: str, handler: Callable):
+    @classmethod
+    def addHandler(cls, event: str, handler: Callable):
+        """ Add event `handler` to `event`. Handlers will be called when event will `.notify()` about itself.
+            Return True if event already exists, False if event is mentioned for the first time
+        """
         try:
-            self.events[event].append(handler)
+            cls.events[event].append(handler)
         except KeyError:
-            self.events[event] = []
-            self.addHandler(event, handler)
+            cls.events.setdefault(event, []).append(handler)
+            return False
+        else:
+            return True
