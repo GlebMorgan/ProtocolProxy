@@ -4,29 +4,31 @@ from Utils import bitsarray, flags, flag, Logger
 
 from device import Device, Par, Prop, DataInvalidError
 
+
 log = Logger("SONY")
 
 
 class SONY(Device):
+    # Device config
     COMMUNICATION_INTERFACE: str = 'serial'
-    DEVICE_ADDRESS: int = 12
-    NATIVE_TIMEOUT: float = 0.2
-    NATIVE_PARITY: str = 'N'
-    NATIVE_BAUDRATE: int = 9600
+    DEV_ADDRESS: int = 12
+    APP_TIMEOUT: float = 0.2
+    APP_PARITY: str = 'N'
+    APP_BAUDRATE: int = 9600
     DEFAULT_PAYLOAD: bytes = b'\xFF' * 16
     IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
-    # internal service attrs
-    NATIVE_PACKET_MAX_SIZE: int = 18
-    NATIVE_TERMINATOR: bytes = b'\xFF'
+    # Internal service attrs
+    APP_PACKET_MAX_SIZE: int = 18
+    APP_TERMINATOR: bytes = b'\xFF'
 
-    # master-driven parameters
+    # Master-driven parameters
     POWER = Par('p', bool)
     RESET = Par('r', bool)
     VIDEO_IN_EN = Par('vin', bool)
     VIDEO_OUT_EN = Par('vout', bool)
 
-    # device-driven properties
+    # Device-driven properties
     CNT_IN = Prop('in', int)
     CNT_OUT = Prop('out', int)
 
@@ -49,8 +51,8 @@ class SONY(Device):
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
-        if data == b'\x00' * 16: data = self.NATIVE_TERMINATOR  # ◄ SONY native control software does not accept '00's
-        endIndex = data.find(self.NATIVE_TERMINATOR)
+        if data == b'\x00' * 16: data = self.APP_TERMINATOR  # ◄ SONY native control software does not accept '00's
+        endIndex = data.find(self.APP_TERMINATOR)
         return com.write(data[:endIndex+1])
 
     def receiveNative(self, com) -> bytes:
@@ -73,15 +75,15 @@ class SONY(Device):
         raise DataInvalidError(f"Bad data from SONY control software — message size is > 16 bytes")
 
     def validateCommandNative(self, packet: bytes):
-        assert(packet[-1] == self.NATIVE_TERMINATOR[0])
+        assert(packet[-1] == self.APP_TERMINATOR[0])
         if flag(packet[0], 7) is not True:
             log.warning("First byte is invalid SONY message header (wrong data source is on the line?)")
         if packet[1] not in (0x1, 0x9, 0x21, 0x22, 0x30, 0x38):
             log.warning(f"Unknown command type: {packet[1]}")
 
     def validateReply(self, reply: bytes):
-        if len(reply) > self.NATIVE_PACKET_MAX_SIZE:
-            raise DataInvalidError(f"Invalid reply packet size (expected at most {self.NATIVE_PACKET_MAX_SIZE}, "
+        if len(reply) > self.APP_PACKET_MAX_SIZE:
+            raise DataInvalidError(f"Invalid reply packet size (expected at most {self.APP_PACKET_MAX_SIZE}, "
                                    f"got {len(reply)})")
         if (len(reply) < 3): raise DataInvalidError("Invalid reply packet size (expected at least 3, "
                                                     f"got {len(reply)}")

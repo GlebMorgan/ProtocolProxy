@@ -30,16 +30,14 @@ class Par(Notifier):
 
     def __init__(self, alias: str, reqType: type):
         super().__init__()
-
         self.alias = alias
         self.type: type = reqType
         self.value: ParType = reqType()  # ◄ value requested by app
-        self.status: reqType = None  # ◄ value obtained from device
-
-        log.debug(f"Parameter created: {self}")
+        self.status: ParType = None  # ◄ value obtained from device
 
     def __set_name__(self, owner, name):
         self.name = name
+        log.debug(f"Parameter created: {self}")
 
     def __get__(self, instance, owner):
         if instance is None: return self
@@ -78,14 +76,12 @@ class Prop(Notifier):
 
     def __init__(self, alias: str, reqType: type):
         super().__init__()
-
         self.alias = alias
         self.value: ParType = reqType()
 
-        log.debug(f"Property created: {self}")
-
     def __set_name__(self, owner, name):
         self.name = name
+        log.debug(f"Property created: {self}")
 
     def __get__(self, instance, owner):
         if instance is None: return self
@@ -106,15 +102,27 @@ class Prop(Notifier):
 
 
 class Device:
-    DEVICE_ADDRESS: int
-    DEVICE_MAX_INPUT_BUFFER_SIZE: int = 255
-    NATIVE_TIMEOUT: float
-    NATIVE_BAUDRATE: int
-    NATIVE_PARITY: str
-    NATIVE_MAX_INPUT_BUFFER_SIZE: int = 255
+    DEV_ADDRESS: int
+    DEV_BAUDRATE: int = 921600
+    DEV_BYTESIZE: int = 8
+    DEV_PARITY: str = 'N'
+    DEV_STOPBITS: int = 1
+    DEV_TIMEOUT: float = 0.5
+    DEV_WRITE_TIMEOUT: float = 0.5
+    DEV_MAX_INPUT_BUFFER_SIZE: int = 255
+
+    APP_BAUDRATE: int
+    APP_BYTESIZE: int = 8
+    APP_PARITY: int
+    APP_STOPBITS: int = 1
+    APP_TIMEOUT: int
+    APP_WRITE_TIMEOUT: int = 0.5
+    APP_MAX_INPUT_BUFFER_SIZE: int = 255
+
     DEFAULT_PAYLOAD: bytes  # accepted for future redesigns — use 'IDLE_PAYLOAD' instead
     IDLE_PAYLOAD: bytes  # should not change device state when sent to device (init with default payload)
     COMMUNICATION_INTERFACE: str  # name of physical communication interface
+
     API: Mapping[str, Union[Par, Prop]] = None  # device control external API
 
     def wrap(self, data: bytes) -> bytes:
@@ -138,14 +146,20 @@ class Device:
             for parName, checkValue in params:
                 getattr(self.__class__, parName).ack(checkValue)
 
-    def configureInterface(self, applicationInterface, deviceInterface):
+    def configureInterface(self, appInterface, devInterface):
         if (self.COMMUNICATION_INTERFACE == 'serial'):
-            deviceInterface.deviceAddress = self.DEVICE_ADDRESS
-            applicationInterface.timeout = self.NATIVE_TIMEOUT
-            applicationInterface.baudrate = self.NATIVE_BAUDRATE
-            applicationInterface.parity = self.NATIVE_PARITY
-            log.info(f"Interfaces {applicationInterface.__class__.__name__} and {deviceInterface.__class__.__name__} "
-                     f"reconfigured for {self.name} protocol")
+            for par, value in self.__class__.__dict__.items():
+                if par.startswith('DEV_'):
+                    attr = par.lstrip('DEV_').lower()
+                    interface = devInterface
+                elif par.startswith('APP_'):
+                    attr = par.lstrip('APP_').lower()
+                    interface = appInterface
+                else: continue
+                setattr(interface, attr, value)
+            devInterface.deviceAddress = self.DEV_ADDRESS
+            log.info(f"In/out {self.COMMUNICATION_INTERFACE} interfaces reconfigured for {self.name} protocol")
+        else: raise NotImplementedError(f"Interface {self.COMMUNICATION_INTERFACE} is not supported")
 
     def __init__(self):
         self.lock = RLock()

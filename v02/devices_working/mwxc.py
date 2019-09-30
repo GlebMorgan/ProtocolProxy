@@ -1,34 +1,34 @@
 import struct
 
 from Utils import bitsarray, flags, bytewise, Logger
-from Transceiver import rfc1071
+from Transceiver import rfc1071, BadDataError, SerialCommunicationError, BadCrcError
 
 from device import Device, Par, Prop, DataInvalidError
-from serial_transceiver import BadDataError, SerialCommunicationError, BadRfcError
 
 
 log = Logger("MWXC")
 
 
 class MWXC(Device):
+    # Device config
     COMMUNICATION_INTERFACE: str = 'serial'
-    DEVICE_ADDRESS: int = 14
-    NATIVE_TIMEOUT: float = 0.2
-    NATIVE_PARITY: str = 'O'
-    NATIVE_BAUDRATE: int = 115200
+    DEV_ADDRESS: int = 14
+    APP_TIMEOUT: float = 0.2
+    APP_PARITY: str = 'O'
+    APP_BAUDRATE: int = 115200
     DEFAULT_PAYLOAD: bytes = bytes.fromhex('01 01 00 00 00 00 00 00 00 00 00')
     IDLE_PAYLOAD: bytes = DEFAULT_PAYLOAD
 
-    # internal service attrs
-    NATIVE_STARTBYTE_COMMAND: bytes = b'\xA0'
-    NATIVE_STARTBYTE_REPLY: bytes = b'\x50'
-    NATIVE_PACKET_SIZE: int = 13
+    # Internal service attrs
+    APP_STARTBYTE_COMMAND: bytes = b'\xA0'
+    APP_STARTBYTE_REPLY: bytes = b'\x50'
+    APP_PACKET_SIZE: int = 13
 
-    # master-driven parameters
+    # Master-driven parameters
     POWER = Par('p', bool)  # ack by POWER_STATE device property
     VIDEO_OUT_EN = Par('vout', bool)  # ack by VIDEO_OUT_STATE device property
 
-    # device-driven properties
+    # Device-driven properties
     VIDEO_IN_STATE = Prop('vin', bool)
     CTRL_CHNL_STATE = Prop('c', bool)
 
@@ -48,28 +48,28 @@ class MWXC(Device):
         return packet[1:]
 
     def sendNative(self, com, data: bytes) -> int:
-        data = self.NATIVE_STARTBYTE_REPLY + data
+        data = self.APP_STARTBYTE_REPLY + data
         return com.write(data + rfc1071(data))
 
     def receiveNative(self, com) -> bytes:
         startByte = com.read(1)
-        if (startByte != self.NATIVE_STARTBYTE_COMMAND):
+        if (startByte != self.APP_STARTBYTE_COMMAND):
             log.warning(f"Bad data in front of the stream: {bytewise(startByte)}. Searching for valid startbyte...")
-            for i in range(1, self.NATIVE_PACKET_SIZE):
+            for i in range(1, self.APP_PACKET_SIZE):
                 startByte = com.readSimple(1)
                 if (not startByte):
                     raise BadDataError("No startbyte")
-                if (startByte == self.NATIVE_STARTBYTE_COMMAND):
+                if (startByte == self.APP_STARTBYTE_COMMAND):
                     log.info(f"Found valid header at pos {i}")
                     break
             else: raise SerialCommunicationError("Cannot find header in datastream, too many attempts...")
 
-        nativePacket = startByte + com.readSimple(self.NATIVE_PACKET_SIZE - 1)
-        if len(nativePacket) != self.NATIVE_PACKET_SIZE:
-            raise BadDataError(f"Bad packet (data too small, [{len(nativePacket)}] out of [{self.NATIVE_PACKET_SIZE}])",
+        nativePacket = startByte + com.readSimple(self.APP_PACKET_SIZE - 1)
+        if len(nativePacket) != self.APP_PACKET_SIZE:
+            raise BadDataError(f"Bad packet (data too small, [{len(nativePacket)}] out of [{self.APP_PACKET_SIZE}])",
                                dataname="Packet", data=nativePacket)
         if (int.from_bytes(rfc1071(nativePacket), byteorder='big') != 0):
-            raise BadRfcError(f"Bad packet checksum (expected '{bytewise(rfc1071(nativePacket[:-2]))}', "
+            raise BadCrcError(f"Bad packet checksum (expected '{bytewise(rfc1071(nativePacket[:-2]))}', "
                               f"got '{bytewise(nativePacket[-2:])}'). Packet discarded",
                               dataname="Packet", data=nativePacket)
         self.IDLE_PAYLOAD = nativePacket[1:-2]
