@@ -4,17 +4,16 @@ import readline
 from contextlib import contextmanager
 from itertools import chain
 from os import listdir, linesep
-from os.path import abspath, dirname, isfile, join as joinpath, isdir
+from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
 from sys import exit as sys_exit
 from typing import Union
 
-from Utils import Logger, bytewise, castStr
+from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict
 
-from config_loader import ConfigLoader
 from device import Device, DataInvalidError
 from notifier import Notifier
-from serial_transceiver import (SerialTransceiver, PelengTransceiver, SerialError, SerialCommunicationError,
-                                SerialReadTimeoutError, SerialWriteTimeoutError, BadDataError, BadRfcError)
+from Transceiver import SerialTransceiver, PelengTransceiver
+from Transceiver.errors import *
 
 log = Logger("App")
 tlog = Logger("Transactions")
@@ -36,46 +35,48 @@ class CommandWarning(ApplicationError):
 
 
 class ProtocolLoader(dict):
-    def __init__(self, basePath: str = None, folder: str = 'devices'):
+    def __init__(self, path: str = None):
         super().__init__()
-        if basePath is None: basePath = dirname(abspath(__file__))
-        self.protocolsPath = joinpath(basePath, folder)
-        if not isdir(self.protocolsPath):
-            # TODO: catch this error in ui and ask for valid protocols path
-            raise ApplicationError("Protocols directory path is invalid")
-        self.directory = folder
-        for filename in listdir(self.protocolsPath):
-            if (filename.endswith('.py') and isfile(joinpath(self.protocolsPath, filename))):
-                self[filename[:-3].lower()] = None
+        if path is None:
+            self.__protocols_path__ = joinpath(envar('%APPDATA%'), '.PelengTools', 'ProtocolProxy', 'devices')
+        else:
+            if not isdir(path): raise ApplicationError(f"Invalid protocols directory path: {path}")
+            else: self.__protocols_path__ = path
+        for filename in listdir(self.__protocols_path__):
+            if (filename.endswith('.py') and isfile(joinpath(self.__protocols_path__, filename))):
+                self.setdefault(filename[:-3].lower())
 
     def __getitem__(self, item):
+        pDir = basename(self.__protocols_path__)
+
         try:
             protocol = super().__getitem__(item)
         except KeyError:
             raise ApplicationError(f"No such protocol: {item}")
+
         if protocol is not None:
             return protocol
         else:
             try:
-                deviceModule = importlib.import_module('.'.join((self.directory, item)))
+                deviceModule = importlib.import_module('.'.join((pDir, item)))
             except ModuleNotFoundError:
-                raise ApplicationError(f"Cannot find protocol file '{item}.py' in '{self.directory}' directory "
+                raise ApplicationError(f"Cannot find protocol file '{item}.py' in '{pDir}' directory "
                                        f"(application resources corrupted?)")
             try:
                 deviceClass = getattr(deviceModule, item.upper())
             except AttributeError:
                 raise ApplicationError(f"Cannot find protocol class {item.upper()} "
-                                       f"in '{joinpath(self.directory, item)}.py' "
-                                       f"(wrong file in '{self.directory}' directory?)")
+                                       f"in '{joinpath(pDir, item)}.py' "
+                                       f"(wrong file in '{pDir}' directory?)")
             if not issubclass(deviceClass, Device):
-                raise ApplicationError(f"Class {item.upper()} in '{joinpath(self.directory, item)}.py' is invalid "
-                                       f"(directory '{self.directory}' should contain protocol classes only)")
+                raise ApplicationError(f"Class {item.upper()} in '{joinpath(pDir, item)}.py' is invalid "
+                                       f"(directory '{pDir}' should contain protocol classes only)")
             self[item] = deviceClass
 
             return deviceClass
 
 
-class CONFIG(ConfigLoader):
+class CONFIG(ConfigLoader, section='APP'):
     DEVICES_FOLDER_REL: str = 'devices'
     DEFAULT_APP_COM_PORT: str = 'COM11'
     DEFAULT_DEV_COM_PORT: str = 'COM1'
@@ -87,14 +88,16 @@ class CONFIG(ConfigLoader):
 
 
 class App(Notifier):
-    VERSION: str = '0.2'
-    PROJECT_FOLDER: str = dirname(abspath(__file__))
+    VERSION: str = '1.0.dev0'  # TODO: move to main.py
+    PROJECT_NAME = 'ProtocolProxy'  # TODO: move to main.py
+    PROJECT_FOLDER: str = dirname(abspath(__file__))  # TODO: move to main.py
     protocols = None
 
     def __init__(self):
         super().__init__()
-        CONFIG.load('APP', self.PROJECT_FOLDER)
-        self.protocols = ProtocolLoader(self.PROJECT_FOLDER, CONFIG.DEVICES_FOLDER_REL)
+
+        CONFIG.load('Tests\\ProtocolProxy')
+        self.protocols = ProtocolLoader(joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices'))
 
         self.cmdThread: threading.Thread = None
         self.commThread: threading.Thread = None
@@ -134,7 +137,7 @@ class App(Notifier):
     def init(self):
         log.debug(f"Launched from:      {abspath(__file__)}")
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
-        log.info(f"Protocols directory: {joinpath(self.PROJECT_FOLDER, self.protocols.directory)}")
+        log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
 
     def startCmdThread(self):
@@ -213,7 +216,7 @@ class App(Notifier):
                        f"(wrong data source is connected to {self.appInt.token}?)")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
-        except BadRfcError as e:
+        except BadCrcError as e:
             tlog.error(f"Checksum validation failed for packet from {subject} native control soft")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
@@ -255,7 +258,7 @@ class App(Notifier):
             tlog.error(f"Received corrupted data from '{subject}' device")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
-        except BadRfcError as e:
+        except BadCrcError as e:
             tlog.error(f"Checksum validation failed for packet from {subject} device")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
@@ -276,61 +279,67 @@ class App(Notifier):
 
     def commLoop(self, stopEvent):
         try:
-            with self.appInt, self.devInt:
-                try:
-                    self.commRunning = True
-                    self.nativeSoftConnEstablished = False
-                    log.info("Communication launched")
-                    while True:  # TODO: replace this loop with proper timing-based scheduler
-                        self.nativeData = self.deviceData = None
-                        if (stopEvent.is_set()):
-                            log.info("Received stop communication command.")
-                            break
-                        with self.device.lock:
-                            with self.controlSoftErrorsHandler():
-                                if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
-                                else: self.nativeData = self.device.IDLE_PAYLOAD
-                            if self.nativeData is None: continue
-
-                            self.nativeData = self.device.wrap(self.nativeData)
-                            try:
-                                self.devInt.sendPacket(self.nativeData)
-                            except SerialWriteTimeoutError:
-                                tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                                continue  # TODO: what needs to be done when unexpected error happens [2]?
-
-                            with self.deviceErrorsHandler(stopEvent):
-                                self.deviceData = self.devInt.receivePacket()
-                            if self.deviceData is None: continue
-
-                            self.deviceData = self.device.unwrap(self.deviceData)
-                            try:
-                                if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
-                                    self.device.sendNative(self.appInt, self.deviceData)
-                            except SerialWriteTimeoutError:
-                                if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
-                                    if self.appInt.nTimeouts < 2:
-                                        tlog.info(f"Waiting for {self.device.name} native control soft to launch")
-                                else:
-                                    tlog.error(f"Failed to send data over {self.appInt.token} "
-                                               f"(native communication soft disconnected?)")
-                                    # TODO: what needs to be done when unexpected error happens [3]?
-
-                            # TODO: self.triggerEvent(ui_update)
-
-                except (SerialError, DataInvalidError) as e:
-                    tlog.fatal(f"Transaction failed: {e}")
-                    tlog.showStackTrace(e, level='debug')
-                    # TODO: what needs to be done when unexpected error happens [1]?
-                finally:
-                    self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                    self.commRunning = False
-                    log.info("Communication stopped")
+            device = 'native control soft'
+            self.appInt.open()
+            device = 'device'
+            self.devInt.open()
         except SerialCommunicationError as e:
-            log.fatal(f"Failed to start communication: {e}")
+            log.fatal(f"Failed to start communication with {device}: {e}")
             log.showStackTrace(e, level='debug')
         finally:
             self.commThread = None
+
+        with self.appInt, self.devInt:
+            try:
+                self.commRunning = True
+                self.nativeSoftConnEstablished = False
+                log.info("Communication launched")
+                while True:  # TODO: replace this loop with proper timing-based scheduler
+                    self.nativeData = self.deviceData = None
+                    if (stopEvent.is_set()):
+                        log.info("Received stop communication command.")
+                        break
+                    with self.device.lock:
+                        with self.controlSoftErrorsHandler():
+                            if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
+                            else: self.nativeData = self.device.IDLE_PAYLOAD
+                        if self.nativeData is None: continue
+
+                        self.nativeData = self.device.wrap(self.nativeData)
+                        try:
+                            self.devInt.sendPacket(self.nativeData)
+                        except SerialWriteTimeoutError:
+                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                            continue  # TODO: what needs to be done when unexpected error happens [2]?
+
+                        with self.deviceErrorsHandler(stopEvent):
+                            self.deviceData = self.devInt.receivePacket()
+                        if self.deviceData is None: continue
+
+                        self.deviceData = self.device.unwrap(self.deviceData)
+                        try:
+                            if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
+                                self.device.sendNative(self.appInt, self.deviceData)
+                        except SerialWriteTimeoutError:
+                            if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
+                                if self.appInt.nTimeouts < 2:
+                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
+                            else:
+                                tlog.error(f"Failed to send data over {self.appInt.token} "
+                                           f"(native communication soft disconnected?)")
+                                # TODO: what needs to be done when unexpected error happens [3]?
+
+                        # TODO: self.triggerEvent(ui_update)
+
+            except (SerialError, DataInvalidError) as e:
+                tlog.fatal(f"Transaction failed: {e}")
+                tlog.showStackTrace(e, level='debug')
+                # TODO: what needs to be done when unexpected error happens [1]?
+            finally:
+                self.appInt.nTimeouts = self.devInt.nTimeouts = 0
+                self.commRunning = False
+                log.info("Communication stopped")
+
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
@@ -398,15 +407,6 @@ class App(Notifier):
                     raise CommandError(f"No such command '{parameter}'")
                 return " — ".join(commandsHelp[parameter])
 
-        def formatDict(d: dict, spaces=4):
-            lines = (f"{' ' * spaces}'{name}' = {str(value)}" if value is not d else '<this mapping>'
-                     for name, value in d.items())
-            return linesep.join(chain('{', lines, '}'))
-
-        def formatSerialTransceiver(com: SerialTransceiver):
-            return (f"{com.__class__.__name__} ({'opened' if com.is_open else 'closed'}): "
-                    f"'{com.port}', {com.baudrate}, {com.bytesize}-{com.parity}-{com.stopbits}")
-
         def test(*args):
             cmd.debug("Test function output. Args: " + (', '.join(args) if args else '<None>'))
             if not args:
@@ -458,7 +458,7 @@ class App(Notifier):
 
                 if (command == 'e'):
                     cmd.error("Terminating...")  # 'error' is just for visual standing out
-                    self.notify('quit')
+                    # self.notify('quit')  #FIXME Says 'non-existing event'
                     sys_exit(0)
 
                 elif command in ('h', 'help'):
@@ -547,8 +547,8 @@ class App(Notifier):
 
                 elif command == 'com':
                     if len(params) == 1:
-                        cmd.info(f"Device interface: {formatSerialTransceiver(self.devInt)}")
-                        cmd.info(f"Control soft interface: {formatSerialTransceiver(self.appInt)}")
+                        cmd.info(f"Device interface: {self.devInt.format()}")
+                        cmd.info(f"Control soft interface: {self.appInt.format()}")
                     elif len(params) == 3:
                         if self.commRunning:
                             raise ApplicationError("Cannot change port number when communication is running")
