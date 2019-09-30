@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from itertools import chain
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
-from sys import exit as sys_exit
-from typing import Union
+from sys import exit as sys_exit, path as sys_path
+from typing import Union, Dict, Type
 
 from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict
 
@@ -35,18 +35,21 @@ class CommandWarning(ApplicationError):
 
 
 class ProtocolLoader(dict):
+    path: str = joinpath(envar('%APPDATA%'), '.PelengTools', 'ProtocolProxy', 'devices')
+
     def __init__(self, path: str = None):
         super().__init__()
         if path is None:
-            self.__protocols_path__ = joinpath(envar('%APPDATA%'), '.PelengTools', 'ProtocolProxy', 'devices')
+            self.__protocols_path__ = self.__class__.path
         else:
             if not isdir(path): raise ApplicationError(f"Invalid protocols directory path: {path}")
             else: self.__protocols_path__ = path
         for filename in listdir(self.__protocols_path__):
             if (filename.endswith('.py') and isfile(joinpath(self.__protocols_path__, filename))):
                 self.setdefault(filename[:-3].lower())
+        sys_path.append(self.__protocols_path__)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> Type[Device]:
         pDir = basename(self.__protocols_path__)
 
         try:
@@ -58,7 +61,7 @@ class ProtocolLoader(dict):
             return protocol
         else:
             try:
-                deviceModule = importlib.import_module('.'.join((pDir, item)))
+                deviceModule = importlib.import_module(item)
             except ModuleNotFoundError:
                 raise ApplicationError(f"Cannot find protocol file '{item}.py' in '{pDir}' directory "
                                        f"(application resources corrupted?)")
@@ -84,25 +87,37 @@ class CONFIG(ConfigLoader, section='APP'):
     SMALL_TIMEOUT_DELAY: float = 0.5  # sec
     BIG_TIMEOUT_DELAY: int = 5  # sec
     NO_REPLY_HOPELESS: int = 50  # timeouts
-    NATIVE_SOFT_COMM_MODE: bool = True
+    NATIVE_SOFT_COMM: bool = True
 
 
 class App(Notifier):
-    VERSION: str = '1.0.dev0'  # TODO: move to main.py
-    PROJECT_NAME = 'ProtocolProxy'  # TODO: move to main.py
-    PROJECT_FOLDER: str = dirname(abspath(__file__))  # TODO: move to main.py
-    protocols = None
+    VERSION: str = '1.0.dev0'  # TEMP: move to main.py
+    PROJECT_NAME = 'ProtocolProxy'  # TEMP: move to main.py
+    PROJECT_FOLDER: str = dirname(abspath(__file__))  # TEMP: move to main.py
+    protocols: Dict[str, Type[Device]] = None
+
+    # API methods:
+    #   • init()
+    #   • startCmdThread()
+    #   • setProtocol
+    #   • start()
+    #   • stop()
+    #
+    # API objects:
+    #   • device
+    #   • CONFIG
 
     def __init__(self):
         super().__init__()
+        CONFIG.load()
 
-        CONFIG.load('Tests\\ProtocolProxy')
-        self.protocols = ProtocolLoader(joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices'))
+        self.protocols: ProtocolLoader = ProtocolLoader()
 
         self.cmdThread: threading.Thread = None
         self.commThread: threading.Thread = None
         self.stopCommEvent: threading.Event = None
         self.commRunning: bool = False
+
         self.loggerLevels = {
             'App': 'DEBUG',
             'Transactions': 'DEBUG',
@@ -112,7 +127,7 @@ class App(Notifier):
         }
 
         self.device: Device = None  # while device is None, comm interfaces are not initialized
-        self.interactWithNativeSoft: bool = CONFIG.NATIVE_SOFT_COMM_MODE
+        self.interactWithNativeSoft: bool = CONFIG.NATIVE_SOFT_COMM
 
         # when communication is running, these ▼ attrs should be accessed only from inside commThread!
         self.appInt: SerialTransceiver = None  # serial interface to native communication soft (virtual port)
@@ -129,13 +144,15 @@ class App(Notifier):
             if self.commRunning:
                 self.stopCommEvent.set()
             self.commThread.join()
+
         if self.cmdThread:
             self.cmdThread.join()
+
         CONFIG.save()
         print("TERMINATED :)")
 
     def init(self):
-        log.debug(f"Launched from:      {abspath(__file__)}")
+        log.debug(f"Launched from:      {abspath(__file__)}")  # TEMP
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
         log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
@@ -146,35 +163,33 @@ class App(Notifier):
 
     @contextmanager
     def restartNeeded(self):
-        if (not self.commRunning):
+        if not self.commRunning:
             yield
         else:
             self.stop()
             yield
             self.start()
 
-    def getInterface(self, intType: str):
+    @staticmethod
+    def getInterface(intType: str):
         if intType.lower() == 'virtual serial':
             return SerialTransceiver()
         elif intType.lower() == 'serial':
-            return PelengTransceiver(timeout=CONFIG.DEVICE_TIMEOUT)
+            return PelengTransceiver()
         elif intType.lower() == 'ethernet':
-            log.error(f"Interface {intType} is not supported currently")
-            return NotImplemented
+            raise NotImplementedError(f"Interface {intType} is not supported currently")
         else: raise ApplicationError(f"Unknown interface: {intType}")
 
     def initInterfaces(self):
-        self.appInt = self.getInterface('virtual serial')
+        self.appInt = SerialTransceiver()
         self.appInt.port = CONFIG.DEFAULT_APP_COM_PORT
         self.devInt = self.getInterface(self.device.COMMUNICATION_INTERFACE)
         self.devInt.port = CONFIG.DEFAULT_DEV_COM_PORT
-        self.devInt.device = self.device.DEVICE_ADDRESS
+        # self.devInt.device = self.device.DEV_ADDRESS  # TESTME: what was the reason of this line here???
 
     def setProtocol(self, deviceName: str):
         self.device = self.protocols[deviceName]()
         if not self.appInt and not self.devInt: self.initInterfaces()
-        if self.devInt.INTERFACE_NAME != self.device.COMMUNICATION_INTERFACE:
-            log.error("Only serial interface is supported currently. Interface property is ignored.")
         with self.device.lock, self.restartNeeded():
             self.device.configureInterface(self.appInt, self.devInt)
 
@@ -231,7 +246,7 @@ class App(Notifier):
             if self.nativeSoftConnEstablished is False: self.nativeSoftConnEstablished = True
             return
         finally:
-            if self.appInt.in_waiting > self.device.NATIVE_MAX_INPUT_BUFFER_SIZE:
+            if self.appInt.in_waiting > self.device.APP_MAX_INPUT_BUFFER_SIZE:
                 nBytesUnread = self.appInt.in_waiting
                 tlog.error(f"{subject} native control soft input buffer ({self.appInt.port}) is filled over limit")
                 self.appInt.reset_input_buffer()
@@ -272,74 +287,68 @@ class App(Notifier):
                 self.devInt.nTimeouts = 0
             return
         finally:
-            if self.devInt.in_waiting > self.device.DEVICE_MAX_INPUT_BUFFER_SIZE:
+            if self.devInt.in_waiting > self.device.DEV_MAX_INPUT_BUFFER_SIZE:
                 tlog.warning(f"{subject} serial input buffer ({self.devInt.port}) comes to overflow")
                 self.devInt.reset_input_buffer()
                 tlog.info(f"{self.devInt.token}: {self.devInt.in_waiting} bytes flushed.")
 
     def commLoop(self, stopEvent):
         try:
-            device = 'native control soft'
-            self.appInt.open()
-            device = 'device'
-            self.devInt.open()
-        except SerialCommunicationError as e:
-            log.fatal(f"Failed to start communication with {device}: {e}")
+            with self.appInt, self.devInt:
+                try:
+                    self.commRunning = True
+                    self.nativeSoftConnEstablished = False
+                    log.info("Communication launched")
+                    while True:  # TODO: replace this loop with proper timing-based scheduler
+                        self.nativeData = self.deviceData = None
+                        if (stopEvent.is_set()):
+                            log.info("Received stop communication command.")
+                            break
+                        with self.device.lock:
+                            with self.controlSoftErrorsHandler():
+                                if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
+                                else: self.nativeData = self.device.IDLE_PAYLOAD
+                            if self.nativeData is None: continue
+
+                            self.nativeData = self.device.wrap(self.nativeData)
+                            try:
+                                self.devInt.sendPacket(self.nativeData)
+                            except SerialWriteTimeoutError:
+                                tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                                continue  # TODO: what needs to be done when unexpected error happens [2]?
+
+                            with self.deviceErrorsHandler(stopEvent):
+                                self.deviceData = self.devInt.receivePacket()
+                            if self.deviceData is None: continue
+
+                            self.deviceData = self.device.unwrap(self.deviceData)
+                            try:
+                                if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
+                                    self.device.sendNative(self.appInt, self.deviceData)
+                            except SerialWriteTimeoutError:
+                                if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
+                                    if self.appInt.nTimeouts < 2:
+                                        tlog.info(f"Waiting for {self.device.name} native control soft to launch")
+                                else:
+                                    tlog.error(f"Failed to send data over {self.appInt.token} "
+                                               f"(native communication soft disconnected?)")
+                                    # TODO: what needs to be done when unexpected error happens [3]?
+
+                            # TODO: self.triggerEvent(ui_update)
+
+                except (SerialError, DataInvalidError) as e:
+                    tlog.fatal(f"Transaction failed: {e}")
+                    tlog.showStackTrace(e, level='debug')
+                    # TODO: what needs to be done when unexpected error happens [1]?
+                finally:
+                    self.appInt.nTimeouts = self.devInt.nTimeouts = 0
+                    self.commRunning = False
+                    log.info("Communication stopped")
+        except SerialError as e:
+            log.fatal(f"Failed to start communication: {e}")
             log.showStackTrace(e, level='debug')
         finally:
             self.commThread = None
-
-        with self.appInt, self.devInt:
-            try:
-                self.commRunning = True
-                self.nativeSoftConnEstablished = False
-                log.info("Communication launched")
-                while True:  # TODO: replace this loop with proper timing-based scheduler
-                    self.nativeData = self.deviceData = None
-                    if (stopEvent.is_set()):
-                        log.info("Received stop communication command.")
-                        break
-                    with self.device.lock:
-                        with self.controlSoftErrorsHandler():
-                            if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
-                            else: self.nativeData = self.device.IDLE_PAYLOAD
-                        if self.nativeData is None: continue
-
-                        self.nativeData = self.device.wrap(self.nativeData)
-                        try:
-                            self.devInt.sendPacket(self.nativeData)
-                        except SerialWriteTimeoutError:
-                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                            continue  # TODO: what needs to be done when unexpected error happens [2]?
-
-                        with self.deviceErrorsHandler(stopEvent):
-                            self.deviceData = self.devInt.receivePacket()
-                        if self.deviceData is None: continue
-
-                        self.deviceData = self.device.unwrap(self.deviceData)
-                        try:
-                            if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
-                                self.device.sendNative(self.appInt, self.deviceData)
-                        except SerialWriteTimeoutError:
-                            if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
-                                if self.appInt.nTimeouts < 2:
-                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
-                            else:
-                                tlog.error(f"Failed to send data over {self.appInt.token} "
-                                           f"(native communication soft disconnected?)")
-                                # TODO: what needs to be done when unexpected error happens [3]?
-
-                        # TODO: self.triggerEvent(ui_update)
-
-            except (SerialError, DataInvalidError) as e:
-                tlog.fatal(f"Transaction failed: {e}")
-                tlog.showStackTrace(e, level='debug')
-                # TODO: what needs to be done when unexpected error happens [1]?
-            finally:
-                self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                self.commRunning = False
-                log.info("Communication stopped")
-
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
@@ -499,6 +508,9 @@ class App(Notifier):
                         cmd.info(NotImplemented)
                     elif elem in ('l', 'log'):
                         cmd.info(', '.join(f"{logName} = {level}" for logName, level in self.loggerLevels.items()))
+                    elif elem in ('e', 'events'):
+                        handlersDict = {e:[h.__name__ for h in handlers] for e, handlers in Notifier.events.items()}
+                        cmd.info(f"Event handlers: {formatDict(handlersDict)}")
                     else: raise CommandError(f"No such parameter '{elem}'")
 
                 elif command in ('l', 'log'):
@@ -611,13 +623,24 @@ class App(Notifier):
 
             except CommandError as e: cmd.showError(e)
             except ApplicationError as e: cmd.showError(e)
+            except NotImplementedError as e: cmd.showError(e)
             except SerialCommunicationError as e: cmd.showError(e)
             except Exception as e: cmd.showStackTrace(e)
 
 
 if __name__ == '__main__':
+    from shutil import copyfile
+
     Logger.LOGGERS["Device"].setLevel("INFO")
-    Logger.LOGGERS["Config"].setLevel("INFO")
+    Logger.LOGGERS["Config"].setLevel("DEBUG")
+    ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
+    ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
+
+    copyfile(joinpath(dirname(abspath(__file__)), 'devices_working', 'sony.py'),
+             joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'sony.py'))
+    copyfile(joinpath(dirname(abspath(__file__)), 'devices_working', 'mwxc.py'),
+             joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'mwxc.py'))
+
     with App() as app:
         app.init()
         app.startCmdThread()
