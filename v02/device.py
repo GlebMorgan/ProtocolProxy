@@ -1,8 +1,6 @@
 from threading import RLock
 from typing import Union, Mapping, TypeVar
-
-from logger import Logger
-from utils import auto_repr, VerboseError
+from Utils import Logger, auto_repr
 
 from notifier import Notifier
 
@@ -13,7 +11,7 @@ class DeviceError(RuntimeError):
     """ Firmware-level error, device returned error / wrong behaviour """
 
 
-class DataInvalidError(VerboseError, DeviceError):
+class DataInvalidError(DeviceError):
     """ Device reply contains invalid data """
 
 
@@ -26,12 +24,13 @@ PropType = TypeVar('PropType', str, int, float, bool)
 
 
 class Par(Notifier):
+    """ App-defined """
+
     __slots__ = 'name', 'alias', 'value', 'status', 'type'
 
-    def __init__(self, name: str, alias: str, reqType: type):
+    def __init__(self, alias: str, reqType: type):
         super().__init__()
 
-        self.name = name
         self.alias = alias
         self.type: type = reqType
         self.value: ParType = reqType()  # ◄ value requested by app
@@ -39,18 +38,8 @@ class Par(Notifier):
 
         log.debug(f"Parameter created: {self}")
 
-    @property
-    def inSync(self) -> bool:
-        return self.value == self.status
-
-    def ack(self, obtainedValue: ParType):
-        if self.inSync:
-            if self.value != obtainedValue:
-                log.warning(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
-        else:
-            if self.value == obtainedValue:
-                self.status = obtainedValue
-                self.notify('updated', self.name, obtainedValue)
+    def __set_name__(self, owner, name):
+        self.name = name
 
     def __get__(self, instance, owner):
         if instance is None: return self
@@ -68,18 +57,35 @@ class Par(Notifier):
     def __repr__(self):
         return auto_repr(self, f"{self.name}={self.value}{'✓' if self.inSync else '↻'}")
 
+    @property
+    def inSync(self) -> bool:
+        return self.value == self.status
+
+    def ack(self, obtainedValue: ParType):
+        if self.inSync:
+            if self.value != obtainedValue:
+                log.warning(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
+        else:
+            if self.value == obtainedValue:
+                self.status = obtainedValue
+                self.notify('updated', self.name, obtainedValue)
+
 
 class Prop(Notifier):
+    """ Device-defined """
+
     __slots__ = 'name', 'alias', 'value'
 
-    def __init__(self, name: str, alias: str, reqType: type):
+    def __init__(self, alias: str, reqType: type):
         super().__init__()
 
-        self.name = name
         self.alias = alias
         self.value: ParType = reqType()
 
         log.debug(f"Property created: {self}")
+
+    def __set_name__(self, owner, name):
+        self.name = name
 
     def __get__(self, instance, owner):
         if instance is None: return self

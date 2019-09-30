@@ -1,9 +1,13 @@
 import threading
 import time
 import unittest
+import sys
 
-from logger import Logger
-from utils import auto_repr, bytewise, formatDict
+from os.path import expandvars as envar, join as joinpath
+from Utils import Logger, auto_repr, bytewise, formatDict
+
+
+sys.path.insert(0, joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices'))
 
 log = Logger("Tests")
 
@@ -305,7 +309,7 @@ class Test(unittest.TestCase):
         from unittest.mock import patch
         from unittest.mock import MagicMock
 
-        import config_loader
+        import configloader
 
         class MockTextFile(StringIO):
             def __init__(self, data=None):
@@ -338,7 +342,7 @@ class Test(unittest.TestCase):
 
         @contextmanager
         def reloadTestConfig():
-            from config_loader import ConfigLoader
+            from configloader import ConfigLoader
 
             class TEST_CONFIG(ConfigLoader):
                 A = 1
@@ -352,12 +356,12 @@ class Test(unittest.TestCase):
                 yield TEST_CONFIG
 
             del ConfigLoader, TEST_CONFIG
-            config_loader.CONFIG_CLASSES = set()
-            config_loader.CONFIGS_DICT = {}
+            configloader.CONFIG_CLASSES = set()
+            configloader.CONFIGS_DICT = {}
 
         @contextmanager
         def reloadEmptyTestConfig():
-            from config_loader import ConfigLoader
+            from configloader import ConfigLoader
             class TEST_CONFIG(ConfigLoader):
                 pass
 
@@ -367,8 +371,8 @@ class Test(unittest.TestCase):
                 yield TEST_CONFIG
 
             del ConfigLoader, TEST_CONFIG
-            config_loader.CONFIG_CLASSES = set()
-            config_loader.CONFIGS_DICT = {}
+            configloader.CONFIG_CLASSES = set()
+            configloader.CONFIGS_DICT = {}
 
         # —————————————————————————————————————————————————————————————————————————————————— #
 
@@ -384,18 +388,18 @@ class Test(unittest.TestCase):
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader.save', new=MagicMock()), \
                     patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
-                config_loader.ConfigLoader.filePath = MockTextFile()
+                configloader.ConfigLoader.filePath = MockTextFile()
                 TEST.load("TEST")
-                self.assertEqual(config_loader.CONFIGS_DICT, dict(TEST=dict(A=1, B=2, C=3.4, D=None)))
+                self.assertEqual(configloader.CONFIGS_DICT, dict(TEST=dict(A=1, B=2, C=3.4, D=None)))
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
         log.debug("Existing configs dict")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader.save', new=MagicMock()):
-                config_loader.ConfigLoader.filePath = MockTextFile()
-                config_loader.CONFIGS_DICT = {'TEST': {'A':100500, 'B':42, 'D':-0}}
-                print(formatDict(config_loader.CONFIGS_DICT))
+                configloader.ConfigLoader.filePath = MockTextFile()
+                configloader.CONFIGS_DICT = {'TEST': {'A':100500, 'B':42, 'D':-0}}
+                print(formatDict(configloader.CONFIGS_DICT))
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 100500)
                 self.assertEqual(TEST.B, 42)
@@ -407,9 +411,9 @@ class Test(unittest.TestCase):
         log.debug("Existing configs dict with invalid parameter types")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader.save', new=MagicMock()):
-                config_loader.ConfigLoader.filePath = MockTextFile()
-                config_loader.CONFIGS_DICT = {'TEST': {'A':'par_a', 'B':'par_b', 'D':'par_d'}}
-                print(formatDict(config_loader.CONFIGS_DICT))
+                configloader.ConfigLoader.filePath = MockTextFile()
+                configloader.CONFIGS_DICT = {'TEST': {'A': 'par_a', 'B': 'par_b', 'D': 'par_d'}}
+                print(formatDict(configloader.CONFIGS_DICT))
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 1)
                 self.assertEqual(TEST.B, 2)
@@ -421,8 +425,8 @@ class Test(unittest.TestCase):
         log.debug("Creating configs dict in load")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
-                config_loader.ConfigLoader.filePath = MockTextFile()
-                config_loader.CONFIGS_DICT['TEST'] = dict(A=42)
+                configloader.ConfigLoader.filePath = MockTextFile()
+                configloader.CONFIGS_DICT['TEST'] = dict(A=42)
                 TEST.load("TEST")
                 self.assertEqual(TEST.A, 42)
                 self.assertEqual(TEST.B, 2)
@@ -434,10 +438,10 @@ class Test(unittest.TestCase):
         log.debug("Wrong section")
         with reloadTestConfig() as TEST:
             with patch('config_loader.ConfigLoader._loadFromFile_', new=MagicMock()):
-                config_loader.ConfigLoader.filePath = MockTextFile()
-                config_loader.CONFIGS_DICT['WRONG'] = dict(A=42)
+                configloader.ConfigLoader.filePath = MockTextFile()
+                configloader.CONFIGS_DICT['WRONG'] = dict(A=42)
                 TEST.load("TEST")
-                self.assertEqual(config_loader.CONFIGS_DICT['WRONG'], {'A':42})
+                self.assertEqual(configloader.CONFIGS_DICT['WRONG'], {'A':42})
                 self.assertEqual(TEST.A, 1)
                 self.assertEqual(TEST.B, 2)
                 self.assertEqual(TEST.C, 3.4)
@@ -478,14 +482,14 @@ class Test(unittest.TestCase):
             with patch('config_loader.ConfigLoader.save', new=MagicMock()), \
                     patch('builtins.open', new=MagicMock(wraps=mf.open)):
 
-                config_loader.ConfigLoader.filePath = mf
+                configloader.ConfigLoader.filePath = mf
                 TEST2.X = 'will_be_overriden'
 
                 TEST.load("TEST")
                 TEST2.load("TEST2")
 
 
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
                 self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (None, 42, 7.0, 100500))
                 self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1,2,3.4,'whatever', None))
 
@@ -512,11 +516,11 @@ class Test(unittest.TestCase):
             mf = MockTextFile()
             with patch('builtins.open', new=MagicMock(wraps=mf.open)):
                 TEST2.X = 'somestr'
-                config_loader.ConfigLoader.filePath = mf
+                configloader.ConfigLoader.filePath = mf
                 TEST.load("TEST")
                 TEST2.load('TEST2')
-                self.assertEqual(config_loader.CONFIGS_DICT, ICD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), None)
+                self.assertEqual(configloader.CONFIGS_DICT, ICD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), None)
                 self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (1,2,3.4,None))
                 self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1,2,3.4,None, 'somestr'))
 
@@ -571,20 +575,20 @@ class Test(unittest.TestCase):
             with patch('builtins.open', new=MagicMock(wraps=mf.open)):
                 TEST2.X = ''
                 TEST2.D = 'thisWillUpdate'
-                config_loader.ConfigLoader.filePath = mf
+                configloader.ConfigLoader.filePath = mf
 
                 self.assertEqual(TEST2.D, 'thisWillUpdate')
 
                 TEST.load("TEST")
                 TEST2.load("TEST2")
 
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
                 self.assertEqual((TEST.A, TEST.B, TEST.C, TEST.D), (None, 42, 7.0, 100500))
                 self.assertEqual((TEST2.A, TEST2.B, TEST2.C, TEST2.D, TEST2.X), (1, 2, 3.4, '', '12'))
 
                 TEST.save()
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
-                print(formatDict(config_loader.CONFIGS_DICT))
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), savedCD)
+                print(formatDict(configloader.CONFIGS_DICT))
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
@@ -626,7 +630,7 @@ class Test(unittest.TestCase):
                 self.assertEqual((TEST2.X, TEST2.Y), ('new_x', 42))
 
                 TEST.save()
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), savedCD)
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
@@ -685,14 +689,14 @@ class Test(unittest.TestCase):
                 TEST.load("TEST")  # will fail, no such section
                 TEST2.load("TEST2")
 
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
                 self.assertEqual((TEST.A, TEST.B), ('par_a', ''))
                 self.assertEqual((TEST2.X, TEST2.Y), ('new_x', 3))
 
                 TEST2.Y = 0
 
                 TEST.save()
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), savedCD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), savedCD)
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
@@ -734,8 +738,8 @@ class Test(unittest.TestCase):
                 self.assertEqual((TEST2.X, TEST2.Y), ('par_x', 42))
 
                 TEST.save()
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), None)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), None)
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
@@ -784,8 +788,8 @@ class Test(unittest.TestCase):
                 TEST.A = 'new_a'
 
                 TEST.save()
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), CD)
 
         log.debug('—'*100 + '\n'*10)
         log.debug('—'*100)
@@ -831,8 +835,8 @@ class Test(unittest.TestCase):
                 TEST2.ignoreUpdates = True
 
                 TEST.save()
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), CD)
 
         log.debug('—' * 100 + '\n' * 10)
         log.debug('—' * 100)
@@ -879,8 +883,8 @@ class Test(unittest.TestCase):
 
                 TEST.save()
 
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), CD)
 
         log.debug('—' * 100 + '\n' * 10)
         log.debug('—' * 100)
@@ -928,8 +932,8 @@ class Test(unittest.TestCase):
 
                 TEST.save()
 
-                self.assertEqual(config_loader.CONFIGS_DICT, CD)
-                self.assertEqual(config_loader.ConfigLoader.loader.load(mf), CD)
+                self.assertEqual(configloader.CONFIGS_DICT, CD)
+                self.assertEqual(configloader.ConfigLoader.loader.load(mf), CD)
 
 
 if __name__ == '__main__':

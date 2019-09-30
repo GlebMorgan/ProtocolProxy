@@ -1,7 +1,6 @@
 import struct
 
-from bits import bitsarray, flags, flag
-from logger import Logger
+from Utils import bitsarray, flags, flag, Logger
 
 from device import Device, Par, Prop, DataInvalidError
 
@@ -22,19 +21,19 @@ class SONY(Device):
     NATIVE_TERMINATOR: bytes = b'\xFF'
 
     # master-driven parameters
-    POWER = Par('POWER', 'p', bool)
-    RESET = Par('RESET', 'r', bool)
-    VIDEO_IN = Par('VIDEO_IN_EN', 'vin', bool)
-    VIDEO_OUT = Par('VIDEO_OUT_EN', 'vout', bool)
+    POWER = Par('p', bool)
+    RESET = Par('r', bool)
+    VIDEO_IN_EN = Par('vin', bool)
+    VIDEO_OUT_EN = Par('vout', bool)
 
     # device-driven properties
-    CNT_IN = Prop('CNT_IN', 'in', int)
-    CNT_OUT = Prop('CNT_OUT', 'out', int)
+    CNT_IN = Prop('in', int)
+    CNT_OUT = Prop('out', int)
 
     def wrap(self, data: bytes) -> bytes:
         if data != self.IDLE_PAYLOAD: self.CNT_IN += 1
         with self.lock:
-            header = bitsarray(self.POWER, self.RESET, self.VIDEO_IN, self.VIDEO_OUT), self.CNT_IN % 0x100
+            header = bitsarray(self.POWER, self.RESET, self.VIDEO_IN_EN, self.VIDEO_OUT_EN), self.CNT_IN % 0x100
             return struct.pack('< B B', *header) + data
 
     def unwrap(self, packet: bytes) -> bytes:
@@ -44,8 +43,8 @@ class SONY(Device):
         # ▼ access parameters via class to get a descriptor, not parameter value
         cls.POWER.ack(POWER_STATE)
         cls.RESET.ack(RESET_STATE)
-        cls.VIDEO_IN.ack(VIDEO_IN_STATE)
-        cls.VIDEO_OUT.ack(VIDEO_OUT_STATE)
+        cls.VIDEO_IN_EN.ack(VIDEO_IN_STATE)
+        cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
         cls.CNT_OUT = packet[1]
         return packet[2:]
 
@@ -83,6 +82,6 @@ class SONY(Device):
     def validateReply(self, reply: bytes):
         if len(reply) > self.NATIVE_PACKET_MAX_SIZE:
             raise DataInvalidError(f"Invalid reply packet size (expected at most {self.NATIVE_PACKET_MAX_SIZE}, "
-                                   f"got {len(reply)})", dataname='Packet', data=reply)
+                                   f"got {len(reply)})")
         if (len(reply) < 3): raise DataInvalidError("Invalid reply packet size (expected at least 3, "
-                                                    f"got {len(reply)}", dataname='Packet', data=reply)
+                                                    f"got {len(reply)}")

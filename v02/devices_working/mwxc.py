@@ -1,12 +1,11 @@
 import struct
 
-from bits import bitsarray, flags
-from checksums import rfc1071
-from logger import Logger
-from utils import bytewise
+from Utils import bitsarray, flags, bytewise, Logger
+from Transceiver import rfc1071
 
 from device import Device, Par, Prop, DataInvalidError
 from serial_transceiver import BadDataError, SerialCommunicationError, BadRfcError
+
 
 log = Logger("MWXC")
 
@@ -26,16 +25,16 @@ class MWXC(Device):
     NATIVE_PACKET_SIZE: int = 13
 
     # master-driven parameters
-    POWER = Par('POWER', 'p', bool)  # ack by POWER_STATE device property
-    VIDEO_OUT = Par('VIDEO_OUT_EN', 'vout', bool)  # ack by VIDEO_OUT_STATE device property
+    POWER = Par('p', bool)  # ack by POWER_STATE device property
+    VIDEO_OUT_EN = Par('vout', bool)  # ack by VIDEO_OUT_STATE device property
 
     # device-driven properties
-    VIDEO_IN = Prop('VIDEO_IN_STATE', 'vin', bool)
-    CTRL = Prop('CTRL_CHNL_STATE', 'c', bool)
+    VIDEO_IN_STATE = Prop('vin', bool)
+    CTRL_CHNL_STATE = Prop('c', bool)
 
     def wrap(self, data: bytes) -> bytes:
         with self.lock:
-            return struct.pack('< B', bitsarray(self.POWER, self.VIDEO_OUT)) + data
+            return struct.pack('< B', bitsarray(self.POWER, self.VIDEO_OUT_EN)) + data
 
     def unwrap(self, packet: bytes) -> bytes:
         self.validateReply(packet)
@@ -43,7 +42,7 @@ class MWXC(Device):
         POWER_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE, CTRL_CHNL_STATE = flags(packet[0], 4)
         # ▼ access parameters via class to get a descriptor, not parameter value
         cls.POWER.ack(POWER_STATE)
-        cls.VIDEO_OUT.ack(VIDEO_OUT_STATE)
+        cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
         cls.VIDEO_IN = VIDEO_IN_STATE
         cls.CTRL = CTRL_CHNL_STATE
         return packet[1:]
@@ -78,4 +77,4 @@ class MWXC(Device):
 
     def validateReply(self, reply: bytes):
         if (len(reply) != 18): raise DataInvalidError(f"Invalid reply packet size (expected 18, "
-                                                      f"got {len(reply)})", dataname='Packet', data=reply)
+                                                      f"got {len(reply)})")
