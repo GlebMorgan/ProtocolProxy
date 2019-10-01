@@ -30,6 +30,5 @@ if __name__ == '__main__':
     ui = UI(app, argv)
 
     with app:
-        app.init()
         exit_msg = ui.exec()
         sys_exit(exit_msg)

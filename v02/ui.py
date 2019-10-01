@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHB
     QComboBox, QAction, QLineEdit
 from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
 from Utils import Logger, memoLastPosArgs, ConfigLoader
-
+from PyQt5Utils import SerialCommPanel
 from app import App, ProtocolLoader
 
 # TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
@@ -28,16 +28,20 @@ class UI(QApplication):
         self.title = f"{self.app.PROJECT_NAME} v{self.app.VERSION} © 2019 GlebMorgan"
 
         self.window = self.setUiWindow()
-        self.test_addWidgets()
+        self.root = QWidget(self.window)
+        self.comPanel = SerialCommPanel(self.root, app.devInt)
 
-        self.settingsPane = self.setSettingsPane()
+        self.initLayout(self.root)
+        self.window.setCentralWidget(self.root)
+        self.comPanel.setDisabled(True)
 
-        self.parseArgv(argv)
-        self.app.addHandler('quit', self.quit)
         self.app.init()
+        self.app.addHandler('quit', self.quit)
+        self.setStyle('fusion')
+        self.parseArgv(argv)
 
     def parseArgv(self, argv):
-        if 'cmd' in argv: self.app.startCmdThread()
+        if '-cmd' in argv: self.app.startCmdThread()
 
     def setUiWindow(self):
         this = QMainWindow()
@@ -49,24 +53,17 @@ class UI(QApplication):
         this.show()
         return this
 
-    def setSettingsPane(self):
-        this = QWidget(self.window)
-        toolpaneLayout = QHBoxLayout()
+    def initLayout(self, parent):
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(self.font().pointSize())
 
-        toolpaneLayout.addStretch(1)
+        layout.addWidget(self.comPanel)
+        layout.addWidget(QPushButton("azaza"))
 
-        this.setLayout(toolpaneLayout)
-        this.resize(this.sizeHint())
-        this.show()
-        return this
+        parent.setLayout(layout)
 
-    @staticmethod
-    def centerWindowOnScreen(window):
-        #                   ▼ ————— that is whole screen ————— ▼
-        screenCenterPoint = QDesktopWidget().availableGeometry().center()
-        windowFrame = window.frameGeometry()
-        windowFrame.moveCenter(screenCenterPoint)
-        window.move(windowFrame.topLeft())
+
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
