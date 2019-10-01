@@ -91,9 +91,6 @@ class CONFIG(ConfigLoader, section='APP'):
 
 
 class App(Notifier):
-    VERSION: str = '1.0.dev0'  # TEMP: move to main.py
-    PROJECT_NAME = 'ProtocolProxy'  # TEMP: move to main.py
-    PROJECT_FOLDER: str = dirname(abspath(__file__))  # TEMP: move to main.py
     protocols: Dict[str, Type[Device]] = None
 
     # API methods:
@@ -107,9 +104,13 @@ class App(Notifier):
     #   • device
     #   • CONFIG
 
-    def __init__(self):
+    def __init__(self, INFO: dict):
         super().__init__()
         CONFIG.load()
+
+        self.VERSION = INFO['version']
+        self.PROJECT_NAME = INFO['projectname']
+        self.PROJECT_FOLDER = INFO['projectdir']
 
         self.protocols: ProtocolLoader = ProtocolLoader()
 
@@ -152,7 +153,6 @@ class App(Notifier):
         print("TERMINATED :)")
 
     def init(self):
-        log.debug(f"Launched from:      {abspath(__file__)}")  # TEMP
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
         log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
@@ -467,7 +467,7 @@ class App(Notifier):
 
                 if (command == 'e'):
                     cmd.error("Terminating...")  # 'error' is just for visual standing out
-                    # self.notify('quit')  #FIXME Says 'non-existing event'
+                    self.notify('quit')
                     sys_exit(0)
 
                 elif command in ('h', 'help'):
@@ -631,16 +631,27 @@ class App(Notifier):
 if __name__ == '__main__':
     from shutil import copyfile
 
+    log.debug(f"Launched from: {abspath(__file__)}")
+
     Logger.LOGGERS["Device"].setLevel("INFO")
     Logger.LOGGERS["Config"].setLevel("DEBUG")
     ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
     ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
 
-    copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'sony.py'),
-             joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'sony.py'))
-    copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'mwxc.py'),
-             joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'mwxc.py'))
+    try:
+        copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'sony.py'),
+                 joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'sony.py'))
+        copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'mwxc.py'),
+                 joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'mwxc.py'))
+    except FileNotFoundError as e:
+        log.error(f"Cannot copy devices from development dir to config dir:\n    {e}")
 
-    with App() as app:
+    INFO = {
+        'version': '[cmd]',
+        'projectname': 'ProtocolProxy',
+        'projectdir': dirname(abspath(__file__).strip('.pyz')),
+    }
+
+    with App(INFO) as app:
         app.init()
         app.startCmdThread()

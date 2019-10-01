@@ -1,30 +1,31 @@
-# CONSIDER: ui.py is launched - do not initialize protocol ui panel until user sets protocol explicitly
-#           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
-
-# TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
-
-# TODO: disable animation
-
 from sys import argv, stdout, exit as sys_exit
+from os.path import join as joinpath, expandvars as envar
 
 from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp
 from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction, QLineEdit
 from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
-from Utils import Logger, memoLastPosArgs
+from Utils import Logger, memoLastPosArgs, ConfigLoader
 
-from app import App
+from app import App, ProtocolLoader
 
+# TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
+
+# TODO: disable animation
+
+# CONSIDER: ui.py is launched - do not initialize protocol ui panel until user sets protocol explicitly
+#           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
 log = Logger("UI")
 
 
 class UI(QApplication):
 
-    def __init__(self, app, argv, *args):
+    def __init__(self, app, argv):
         super().__init__(argv)
         self.app = app
+        self.title = f"{self.app.PROJECT_NAME} v{self.app.VERSION} © 2019 GlebMorgan"
 
         self.window = self.setUiWindow()
         self.test_addWidgets()
@@ -43,7 +44,7 @@ class UI(QApplication):
         this.resize(650, 400)
         # self.centerWindowOnScreen(this)
         this.move(1250, 250)
-        this.setWindowTitle(f"ProtocolProxy - v{self.app.VERSION} © GlebMorgan")
+        this.setWindowTitle(self.title)
         # this.setWindowIcon(QIcon("sampleIcon.jpg"))
         this.show()
         return this
@@ -124,16 +125,14 @@ class UI(QApplication):
 
     def test_setTestComPanel(self):
         from Transceiver import PelengTransceiver
-        from test_com_panel import SerialCommPanel
+        from PyQt5Utils import SerialCommPanel
 
         this = SerialCommPanel(self.window, devInt=PelengTransceiver())
         return this
 
     def test_setTestCombobox(self):
-        this = ColoredComboBox(parent=self.window)
-        this.setAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
-        this.setValidator(Validator(this, validate=self.testComboboxValidate))
-        this.setColorer(Colorer(this, colorize=self.testComboboxColorize))
+        this = QComboBox(parent=self.window)
+        this.addAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
         this.addItems((pName.upper() for pName in self.app.protocols if len(pName) < 8))
         this.addItems(('TK-275', 'SMTH'))
         this.resize(this.sizeHint())
@@ -186,14 +185,3 @@ class UI(QApplication):
         self.testLineEdit.setPalette(palette)
         # self.testCombobox.lineEdit().setSelection(3, -2)
         # print(type(self.testComPanel.comChooserCombobox.view()))
-
-
-if __name__ == '__main__':
-    print(f"Launched with args: [{', '.join(argv)}]")
-    # if not stdout.isatty() and 'cmd' not in argv: argv.append('cmd')
-
-    with App() as core:
-        ui = UI(core, argv)
-        exitCode = ui.exec_()
-        sys_exit(exitCode)
-    # sys.kill(sys.getpid(), signal.SIGTERM)
