@@ -636,9 +636,9 @@ if __name__ == '__main__':
     ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
     ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
 
-    copyfile(joinpath(dirname(abspath(__file__)), 'devices_working', 'sony.py'),
+    copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'sony.py'),
              joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'sony.py'))
-    copyfile(joinpath(dirname(abspath(__file__)), 'devices_working', 'mwxc.py'),
+    copyfile(joinpath(dirname(abspath(__file__)), 'devices', 'mwxc.py'),
              joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy\\devices', 'mwxc.py'))
 
     with App() as app:

@@ -123,7 +123,7 @@ class UI(QApplication):
         return this
 
     def test_setTestComPanel(self):
-        from serial_transceiver import PelengTransceiver
+        from Transceiver import PelengTransceiver
         from test_com_panel import SerialCommPanel
 
         this = SerialCommPanel(self.window, devInt=PelengTransceiver())

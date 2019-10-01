@@ -18,7 +18,7 @@ def testRaiseRuntimeError():
 
 class DeviceMock:
     def __init__(self, adr, commandsAndReplies, stopEvent):
-        from serial_transceiver import SerialTransceiver, SerialError
+        from Transceiver import SerialTransceiver, SerialError
 
         try: self.tr = SerialTransceiver(port='COM11')
         except SerialError as e: print("WARNING!" + e.args[0])
@@ -63,7 +63,7 @@ class Test(unittest.TestCase):
     # FIXME: Arr, terrible test design, refactor everything :(
 
     def test_receivePacket(self):
-        from serial_transceiver import PelengTransceiver, BadRfcError, BadDataError
+        from Transceiver import PelengTransceiver, BadCrcError, BadDataError
 
         tr = PelengTransceiver(device=12, port='COM10', timeout=0.2)
         stopEvent = threading.Event()
@@ -118,8 +118,8 @@ class Test(unittest.TestCase):
             # input('Press smth to start! >>>')
 
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
-            self.assertRaises(BadRfcError, sendCommand)  # 'bad_rfc'
-            self.assertRaises(BadRfcError, sendCommand)  # 'rev_rfc'
+            self.assertRaises(BadCrcError, sendCommand)  # 'bad_rfc'
+            self.assertRaises(BadCrcError, sendCommand)  # 'rev_rfc'
             self.assertRaises(BadDataError, sendCommand)  # 'no_zerobyte'
             self.assertRaises(BadDataError, sendCommand)  # 'bad_startbyte'
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
@@ -309,7 +309,7 @@ class Test(unittest.TestCase):
         from unittest.mock import patch
         from unittest.mock import MagicMock
 
-        import configloader
+        from Utils import configloader
 
         class MockTextFile(StringIO):
             def __init__(self, data=None):
@@ -342,7 +342,7 @@ class Test(unittest.TestCase):
 
         @contextmanager
         def reloadTestConfig():
-            from configloader import ConfigLoader
+            from Utils import ConfigLoader
 
             class TEST_CONFIG(ConfigLoader):
                 A = 1
@@ -361,7 +361,7 @@ class Test(unittest.TestCase):
 
         @contextmanager
         def reloadEmptyTestConfig():
-            from configloader import ConfigLoader
+            from Utils import ConfigLoader
             class TEST_CONFIG(ConfigLoader):
                 pass
 
