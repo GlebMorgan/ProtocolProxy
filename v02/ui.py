@@ -1,18 +1,27 @@
+from functools import partial
 from sys import argv, stdout, exit as sys_exit
 from os.path import join as joinpath, expandvars as envar
+from typing import Union
 
-from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp
+from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp, QTimer
 from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
-    QComboBox, QAction, QLineEdit
+    QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout
 from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
 from Utils import Logger, memoLastPosArgs, ConfigLoader
 from PyQt5Utils import SerialCommPanel
 from app import App, ProtocolLoader
 
+
 # TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
-# TODO: disable animation
+# TODO: Remove space between 'Device' label and deviceCombobox
+
+# TODO: Set device default interface settings to CommPanel on device change
+
+# TODO: Set initial device to '' and enable CommPanel on initial device change
+
+# CONSIDER: disable animation
 
 # CONSIDER: ui.py is launched - do not initialize protocol ui panel until user sets protocol explicitly
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
@@ -20,24 +29,48 @@ from app import App, ProtocolLoader
 log = Logger("UI")
 
 
+class Block:
+    def __init__(self, owner: Union[QLayout, QWidget], *, layout: Union[QLayout, str], spacing=None, margins=0):
+        if isinstance(layout, str):
+            if layout == 'v': layout = QVBoxLayout()
+            if layout == 'h': layout = QHBoxLayout()
+        self.layout = layout
+        self.layout.setContentsMargins(*(margins,)*4)
+        if spacing: self.layout.setSpacing(spacing)
+        self.owner = owner
+
+    def __enter__(self):
+        return self.layout
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if isinstance(self.owner, QWidget):
+            self.owner.setLayout(self.layout)
+        elif isinstance(self.owner, QLayout):
+            self.owner.addLayout(self.layout)
+
+
 class UI(QApplication):
 
     def __init__(self, app, argv):
         super().__init__(argv)
         self.app = app
+        self.app.init()
+        self.app.addHandler('quit', self.quit)
         self.title = f"{self.app.PROJECT_NAME} v{self.app.VERSION} © 2019 GlebMorgan"
 
         self.window = self.setUiWindow()
         self.root = QWidget(self.window)
-        self.comPanel = SerialCommPanel(self.root, app.devInt)
+        self.commPanel = SerialCommPanel(self.root, app.devInt)
+        self.deviceCombobox = self.newDeviceCombobox(self.root)
+        self.testButton1 = self.newTestButton(self.root, 1)
+        self.testButton2 = self.newTestButton(self.root, 2)
 
+        self.setStyle('fusion')
         self.initLayout(self.root)
         self.window.setCentralWidget(self.root)
-        self.comPanel.setDisabled(True)
+        # self.commPanel.setDisabled(True)
+        self.updateDeviceCombobox()
 
-        self.app.init()
-        self.app.addHandler('quit', self.quit)
-        self.setStyle('fusion')
         self.parseArgv(argv)
 
     def parseArgv(self, argv):
@@ -54,16 +87,43 @@ class UI(QApplication):
         return this
 
     def initLayout(self, parent):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(self.font().pointSize())
+        fontSpacing = self.font().pointSize()
+        with Block(parent, layout='v', spacing=fontSpacing) as main:
+            with Block(main, layout='h', spacing=0) as toolpanel:
+                toolpanel.addWidget(QLabel("Device", self.root))
+                toolpanel.addWidget(self.deviceCombobox)
+                toolpanel.addSpacing(fontSpacing)
+                toolpanel.addWidget(self.commPanel)
+            main.addWidget(self.testButton1)
+            main.addWidget(self.testButton2)
 
-        layout.addWidget(self.comPanel)
-        layout.addWidget(QPushButton("azaza"))
+    def newDeviceCombobox(self, parent):
+        this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
+        # TODO: this.setLineEdit(QAutoSelectLineEdit())
+        this.setEditable(True)
+        this.setInsertPolicy(QComboBox.NoInsert)  # TODO: new protocol adding
+        this.lineEdit().editingFinished.connect(self.changeProtocol)
+        this.setToolTip("Device")
+        return this
 
-        parent.setLayout(layout)
+    def newTestButton(self, parent, n:int):
+        this = QPushButton(f"Test{n}", parent)
+        this.clicked.connect(getattr(self, f'testSlot{n}'))
+        return this
 
+    def updateDeviceCombobox(self):
+        protocols = tuple(name.upper() for name in self.app.protocols.keys())
+        self.deviceCombobox.addItems(protocols)
 
+    def changeProtocol(self):
+        self.app.setProtocol(self.deviceCombobox.currentText().lower())
+        self.commPanel.serialInt = self.app.devInt
+
+    def testSlot1(self):
+        self.commPanel.isEnabled()
+
+    def testSlot2(self):
+        pass
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 

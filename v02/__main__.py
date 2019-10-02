@@ -2,8 +2,9 @@ import ctypes
 from os.path import abspath, dirname
 from os.path import join as joinpath, expandvars as envar
 from pathlib import Path
-from sys import argv, exit as sys_exit, modules
+import sys
 
+from PyQt5Utils import install_exhook
 from Utils import ConfigLoader
 
 from app import App, ProtocolLoader
@@ -14,8 +15,10 @@ __version__ = '2.0.dev1'
 
 if __name__ == '__main__':
 
+    install_exhook()
+
     print(f"Launched from: {abspath(__file__)}")
-    print(f"Launched with args: [{', '.join(argv)}]")
+    print(f"Launched with args: [{', '.join(sys.argv)}]")
 
     ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
     ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
@@ -27,8 +30,8 @@ if __name__ == '__main__':
     }
 
     app = App(INFO)
-    ui = UI(app, argv)
+    ui = UI(app, sys.argv)
 
     with app:
         exit_msg = ui.exec()
-        sys_exit(exit_msg)
+        sys.exit(exit_msg)

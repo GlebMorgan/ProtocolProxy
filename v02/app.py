@@ -49,7 +49,7 @@ class ProtocolLoader(dict):
                 self.setdefault(filename[:-3].lower())
         sys_path.append(self.__protocols_path__)
 
-    def __getitem__(self, item) -> Type[Device]:
+    def __getitem__(self, item:str) -> Type[Device]:
         pDir = basename(self.__protocols_path__)
 
         try:
