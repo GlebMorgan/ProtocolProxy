@@ -65,37 +65,42 @@ class UI(QApplication):
         self.testButton1 = self.newTestButton(self.root, 1)
         self.testButton2 = self.newTestButton(self.root, 2)
 
+        self.parseArgv(argv)
+        self.setup()
+
+    def setup(self):
         self.setStyle('fusion')
         self.initLayout(self.root)
         self.window.setCentralWidget(self.root)
-        # self.commPanel.setDisabled(True)
-        self.updateDeviceCombobox()
-
-        self.parseArgv(argv)
+        self.commPanel.bind(CommMode.Continuous, self.communicate)
+        if self.app.device is None: self.commPanel.setDisabled(True)
+        self.deviceCombobox.updateContents()
+        self.window.show()
 
     def parseArgv(self, argv):
         if '-cmd' in argv: self.app.startCmdThread()
 
     def setUiWindow(self):
         this = QMainWindow()
-        this.resize(650, 400)
         # self.centerWindowOnScreen(this)
         this.move(1250, 250)
         this.setWindowTitle(self.title)
         # this.setWindowIcon(QIcon("sampleIcon.jpg"))
-        this.show()
         return this
 
     def initLayout(self, parent):
         fontSpacing = self.font().pointSize()
-        with Block(parent, layout='v', spacing=fontSpacing) as main:
+        with Block(parent, layout='v', spacing=fontSpacing, margins=fontSpacing) as main:
             with Block(main, layout='h', spacing=0) as toolpanel:
                 toolpanel.addWidget(QLabel("Device", self.root))
                 toolpanel.addWidget(self.deviceCombobox)
                 toolpanel.addSpacing(fontSpacing)
                 toolpanel.addWidget(self.commPanel)
-            main.addWidget(self.testButton1)
-            main.addWidget(self.testButton2)
+                toolpanel.addStretch()
+            with Block(main, layout='h', spacing=fontSpacing) as testpanel:
+                testpanel.addWidget(self.testButton1)
+                testpanel.addWidget(self.testButton2)
+            main.addStretch()
 
     def newDeviceCombobox(self, parent):
         this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
