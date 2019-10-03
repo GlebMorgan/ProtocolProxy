@@ -103,11 +103,18 @@ class UI(QApplication):
             main.addStretch()
 
     def newDeviceCombobox(self, parent):
+        def updateContents(this):
+            savedText = this.currentText()
+            protocols = tuple(name.upper() for name in self.app.protocols.keys())
+            self.deviceCombobox.addItems(protocols)
+            self.deviceCombobox.setCurrentIndex(this.findText(savedText))
         this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
         # TODO: this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)  # TODO: new protocol adding
         this.lineEdit().editingFinished.connect(self.changeProtocol)
+        this.updateContents = updateContents.__get__(this, this.__class__)
+        this.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         this.setToolTip("Device")
         return this
 
@@ -116,9 +123,15 @@ class UI(QApplication):
         this.clicked.connect(getattr(self, f'testSlot{n}'))
         return this
 
-    def updateDeviceCombobox(self):
-        protocols = tuple(name.upper() for name in self.app.protocols.keys())
-        self.deviceCombobox.addItems(protocols)
+    def communicate(self):
+        if self.app.commRunning:
+            self.app.stop()
+            return True
+        try: self.app.start()
+        except ApplicationError as e:
+            log.error(e)
+            return False
+        else: return True
 
     def changeProtocol(self):
         self.app.setProtocol(self.deviceCombobox.currentText().lower())
