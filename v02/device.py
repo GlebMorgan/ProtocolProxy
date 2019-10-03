@@ -148,18 +148,24 @@ class Device:
 
     def configureInterface(self, appInterface, devInterface):
         if (self.COMMUNICATION_INTERFACE == 'serial'):
-            for par, value in self.__class__.__dict__.items():
+            for par in Device.__dict__.keys():
                 if par.startswith('DEV_'):
                     attr = par.lstrip('DEV_').lower()
                     interface = devInterface
                 elif par.startswith('APP_'):
                     attr = par.lstrip('APP_').lower()
                     interface = appInterface
-                else: continue
-                setattr(interface, attr, value)
+                else:
+                    continue
+                try:
+                    setattr(interface, attr, getattr(self.__class__, par))
+                except AttributeError:
+                    log.warning(f"Cannot apply serial config option '{par}' - "
+                                f"no such option '{interface.__class__.__name__}.{attr}'")
             devInterface.deviceAddress = self.DEV_ADDRESS
             log.info(f"In/out {self.COMMUNICATION_INTERFACE} interfaces reconfigured for {self.name} protocol")
-        else: raise NotImplementedError(f"Interface {self.COMMUNICATION_INTERFACE} is not supported")
+        else:
+            raise NotImplementedError(f"Interface {self.COMMUNICATION_INTERFACE} is not supported")
 
     def __init__(self):
         self.lock = RLock()
