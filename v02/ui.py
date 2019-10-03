@@ -6,20 +6,22 @@ from typing import Union
 from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp, QTimer
 from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
-    QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout
-from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit
+    QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout, QSizePolicy
+from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit, CommMode
 from Utils import Logger, memoLastPosArgs, ConfigLoader
 from PyQt5Utils import SerialCommPanel
-from app import App, ProtocolLoader
+from app import App, ProtocolLoader, ApplicationError
 
 
 # TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
-# TODO: Remove space between 'Device' label and deviceCombobox
+# TODO: Tab order
 
-# TODO: Set device default interface settings to CommPanel on device change
+# TODO: New protocol adding
 
-# TODO: Set initial device to '' and enable CommPanel on initial device change
+# TODO: Return exit status from app.commLoop somehow (from another thread)
+
+# TODO: Move Extended widgets classes from CommPanel to PyQt5Utils.ExtendedWidgets
 
 # CONSIDER: disable animation
 
@@ -111,7 +113,7 @@ class UI(QApplication):
         this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
         # TODO: this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
-        this.setInsertPolicy(QComboBox.NoInsert)  # TODO: new protocol adding
+        this.setInsertPolicy(QComboBox.NoInsert)
         this.lineEdit().editingFinished.connect(self.changeProtocol)
         this.updateContents = updateContents.__get__(this, this.__class__)
         this.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
@@ -134,14 +136,20 @@ class UI(QApplication):
         else: return True
 
     def changeProtocol(self):
-        self.app.setProtocol(self.deviceCombobox.currentText().lower())
-        self.commPanel.serialInt = self.app.devInt
+        protocol = self.deviceCombobox.currentText().lower()
+        if protocol == '': return None
+        self.app.setProtocol(protocol)
+        self.commPanel.setInterface(self.app.devInt)
+        self.commPanel.applySerialConfig()
+        if self.app.device is not None:
+            self.commPanel.setDisabled(False)
+            self.commPanel.comCombobox.setText(self.app.devInt.port.lstrip('COM'))
 
     def testSlot1(self):
-        self.commPanel.isEnabled()
+        print(self.commPanel.isEnabled())
 
     def testSlot2(self):
-        pass
+        print(self.deviceCombobox.currentText())
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
