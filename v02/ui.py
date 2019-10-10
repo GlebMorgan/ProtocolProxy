@@ -8,7 +8,8 @@ from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout, QSizePolicy
 from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit, CommMode
-from Utils import Logger, memoLastPosArgs, ConfigLoader
+from PyQt5Utils.colorer import DisplayColor
+from Utils import Logger, memoLastPosArgs, ConfigLoader, formatDict
 from PyQt5Utils import SerialCommPanel
 from app import App, ProtocolLoader, ApplicationError
 
@@ -19,9 +20,12 @@ from app import App, ProtocolLoader, ApplicationError
 
 # TODO: New protocol adding
 
-# TODO: Return exit status from app.commLoop somehow (from another thread)
+# ✓ Return exit status from app.commLoop somehow (from another thread)
 
 # TODO: Move Extended widgets classes from CommPanel to PyQt5Utils.ExtendedWidgets
+#       + Block class from ui.py
+
+# TODO: window icon
 
 # CONSIDER: disable animation
 
@@ -52,13 +56,18 @@ class Block:
 
 
 class UI(QApplication):
+    protocolChanged = pyqtSignal(str)
+    commStarted = pyqtSignal()
+    commDropped = pyqtSignal()
+    commFailed = pyqtSignal()
+    commStopped = pyqtSignal()
+    commError = pyqtSignal()
+    commTimeout = pyqtSignal()
 
     def __init__(self, app, argv):
         super().__init__(argv)
+        self.title = f"{app.PROJECT_NAME} v{app.VERSION} © 2019 GlebMorgan"
         self.app = app
-        self.app.init()
-        self.app.addHandler('quit', self.quit)
-        self.title = f"{self.app.PROJECT_NAME} v{self.app.VERSION} © 2019 GlebMorgan"
 
         self.window = self.setUiWindow()
         self.root = QWidget(self.window)
@@ -66,18 +75,40 @@ class UI(QApplication):
         self.deviceCombobox = self.newDeviceCombobox(self.root)
         self.testButton1 = self.newTestButton(self.root, 1)
         self.testButton2 = self.newTestButton(self.root, 2)
+        self.testButton3 = self.newTestButton(self.root, 3)
+        self.testButton4 = self.newTestButton(self.root, 4)
 
         self.parseArgv(argv)
         self.setup()
+        self.bindSignals()
 
     def setup(self):
         self.setStyle('fusion')
         self.initLayout(self.root)
         self.window.setCentralWidget(self.root)
-        self.commPanel.bind(CommMode.Continuous, self.communicate)
-        if self.app.device is None: self.commPanel.setDisabled(True)
+        if self.app.device is None:
+            self.commPanel.setDisabled(True)
+        self.app.init()
         self.deviceCombobox.updateContents()
         self.window.show()
+
+    def bindSignals(self):
+        self.app.addHandler('comm started', self.commStarted.emit)
+        self.app.addHandler('comm dropped', self.commDropped.emit)
+        self.app.addHandler('comm timeout', self.commTimeout.emit)
+        self.app.addHandler('comm error', self.commError.emit)
+        self.app.addHandler('comm failed', self.commFailed.emit)
+        self.app.addHandler('comm stopped', self.commStopped.emit)
+        self.app.addHandler('protocol changed', self.protocolChanged.emit)
+        self.app.addHandler('quit', self.quit)
+
+        self.commPanel.bind(CommMode.Continuous, self.triggerContComm)
+        self.commPanel.bind(CommMode.Manual, self.testSendPacketMock)
+        # self.commPanel.bind(CommMode.Smart, self.testSendPacketMock)  # TEMP: uncomment in prod
+
+        self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
+        self.protocolChanged.connect(self.commPanel.updateSerialConfig)
+        self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
 
     def parseArgv(self, argv):
         if '-cmd' in argv: self.app.startCmdThread()
@@ -85,7 +116,7 @@ class UI(QApplication):
     def setUiWindow(self):
         this = QMainWindow()
         # self.centerWindowOnScreen(this)
-        this.move(1250, 250)
+        this.move(1200, 200)  # TEMP
         this.setWindowTitle(self.title)
         # this.setWindowIcon(QIcon("sampleIcon.jpg"))
         return this
@@ -102,6 +133,8 @@ class UI(QApplication):
             with Block(main, layout='h', spacing=fontSpacing) as testpanel:
                 testpanel.addWidget(self.testButton1)
                 testpanel.addWidget(self.testButton2)
+                testpanel.addWidget(self.testButton3)
+                testpanel.addWidget(self.testButton4)
             main.addStretch()
 
     def newDeviceCombobox(self, parent):
@@ -110,13 +143,16 @@ class UI(QApplication):
             protocols = tuple(name.upper() for name in self.app.protocols.keys())
             self.deviceCombobox.addItems(protocols)
             self.deviceCombobox.setCurrentIndex(this.findText(savedText))
+
         this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
         # TODO: this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.setInsertPolicy(QComboBox.NoInsert)
-        this.lineEdit().editingFinished.connect(self.changeProtocol)
-        this.updateContents = updateContents.__get__(this, this.__class__)
         this.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+
+        this.updateContents = updateContents.__get__(this, this.__class__)
+        this.lineEdit().editingFinished.connect(self.changeProtocol)  # TEMP: replace with this.triggered.<...>
+
         this.setToolTip("Device")
         return this
 
@@ -125,31 +161,44 @@ class UI(QApplication):
         this.clicked.connect(getattr(self, f'testSlot{n}'))
         return this
 
-    def communicate(self):
-        if self.app.commRunning:
-            self.app.stop()
-            return True
-        try: self.app.start()
-        except ApplicationError as e:
-            log.error(e)
-            return False
-        else: return True
-
     def changeProtocol(self):
         protocol = self.deviceCombobox.currentText().lower()
         if protocol == '': return None
         self.app.setProtocol(protocol)
-        self.commPanel.setInterface(self.app.devInt)
-        self.commPanel.applySerialConfig()
         if self.app.device is not None:
             self.commPanel.setDisabled(False)
-            self.commPanel.comCombobox.setText(self.app.devInt.port.lstrip('COM'))
+
+    def triggerContComm(self, state):
+        if state is False:
+            self.deviceCombobox.setDisabled(True)
+            status = self.app.start()
+        else:
+            status = self.app.stop()
+            self.deviceCombobox.setDisabled(False)
+        return status
 
     def testSlot1(self):
-        print(self.commPanel.isEnabled())
+        print(formatDict(self.app.events))
 
     def testSlot2(self):
-        print(self.deviceCombobox.currentText())
+        self.app.addHandler('updated', self.commPanel.testSlotL)
+
+    def testSlot3(self):
+        self.focusChanged.connect(lambda *args: print(f"Focus changed: {args}"))
+
+    def testSlot4(self):
+        self.commPanel.commButton.colorer.blink(DisplayColor.Red)
+        print(self.commPanel.baudCombobox.lineEdit().setSelection(-1, 0))
+
+    def testSendPacketMock(self):
+        from random import randint
+        fail = randint(0,1) == 0
+        if fail:
+            print('Emulate packet sent failure')
+            return False
+        else:
+            print('Emulate packet sent success')
+            return True
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
