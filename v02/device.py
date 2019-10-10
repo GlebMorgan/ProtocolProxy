@@ -34,6 +34,7 @@ class Par(Notifier):
         self.type: type = reqType
         self.value: ParType = reqType()  # ◄ value requested by app
         self.status: ParType = None  # ◄ value obtained from device
+        self.addEvents('updated', 'altered')
 
     def __set_name__(self, owner, name):
         self.name = name
@@ -78,6 +79,7 @@ class Prop(Notifier):
         super().__init__()
         self.alias = alias
         self.value: ParType = reqType()
+        self.addEvents('updated')
 
     def __set_name__(self, owner, name):
         self.name = name

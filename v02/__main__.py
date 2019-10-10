@@ -34,4 +34,4 @@ if __name__ == '__main__':
 
     with app:
         exit_msg = ui.exec()
-        sys.exit(exit_msg)
+    sys.exit(exit_msg)
