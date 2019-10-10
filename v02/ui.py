@@ -1,18 +1,13 @@
 from functools import partial
-from sys import argv, stdout, exit as sys_exit
-from os.path import join as joinpath, expandvars as envar
-from typing import Union
 
-from PyQt5.QtCore import Qt, QSize, QStringListModel, pyqtSignal, QRegExp, QTimer
-from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
-    QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout, QSizePolicy
-from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit, CommMode
-from PyQt5Utils.colorer import DisplayColor
-from Utils import Logger, memoLastPosArgs, ConfigLoader, formatDict
+from PyQt5.QtCore import pyqtSignal, QRegExp
+from PyQt5.QtGui import QPalette, QRegExpValidator
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QAction, QSizePolicy
+from PyQt5.QtWidgets import QPushButton, QComboBox, QLineEdit, QLabel
+from PyQt5Utils import ActionButton, Validator, Colorer, ActionComboBox, ActionLineEdit, CommMode
+from PyQt5Utils import DisplayColor, Block
 from PyQt5Utils import SerialCommPanel
-from app import App, ProtocolLoader, ApplicationError
-
+from Utils import Logger, formatDict
 
 # TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
@@ -33,26 +28,6 @@ from app import App, ProtocolLoader, ApplicationError
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
 log = Logger("UI")
-
-
-class Block:
-    def __init__(self, owner: Union[QLayout, QWidget], *, layout: Union[QLayout, str], spacing=None, margins=0):
-        if isinstance(layout, str):
-            if layout == 'v': layout = QVBoxLayout()
-            if layout == 'h': layout = QHBoxLayout()
-        self.layout = layout
-        self.layout.setContentsMargins(*(margins,)*4)
-        if spacing: self.layout.setSpacing(spacing)
-        self.owner = owner
-
-    def __enter__(self):
-        return self.layout
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if isinstance(self.owner, QWidget):
-            self.owner.setLayout(self.layout)
-        elif isinstance(self.owner, QLayout):
-            self.owner.addLayout(self.layout)
 
 
 class UI(QApplication):
