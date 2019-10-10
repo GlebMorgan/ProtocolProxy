@@ -92,18 +92,18 @@ class CONFIG(ConfigLoader, section='APP'):
 
 class App(Notifier):
     protocols: Dict[str, Type[Device]] = None
-
-    # API methods:
-    #   • init()
-    #   • startCmdThread()
-    #   • setProtocol
-    #   • start()
-    #   • stop()
-    #
-    # API objects:
-    #   • device
-    #   • CONFIG
-
+    """
+    API methods:
+      • init()
+      • startCmdThread()
+      • setProtocol()
+      • start()
+      • stop()
+    
+    API objects:
+      • device
+      • CONFIG
+    """
     def __init__(self, INFO: dict):
         super().__init__()
         CONFIG.load()
@@ -156,6 +156,19 @@ class App(Notifier):
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
         log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
         for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
+        self.addEvents(
+            'app initialized',   # All required startup initialization finished, API methods could be used
+            'protocol changed',  # App reconfigured for new protocol
+            'quit',              # Occurs before context-manager cleanup is performed
+            'comm started',      # Communication loop is ready to start transactions
+            'comm dropped',      # Failed to configure and open ports
+            'comm failed',       # Fatal failure in communication loop
+            'comm stopped',      # Communication loop is stopped and communication thread is about to exit
+            'comm timeout',      # Write or read timeout in communication loop
+            'comm error'         # Error in packet transmission process (bad data, connection lost, etc.)
+        )
+
+        self.notify('app initialized')
 
     def startCmdThread(self):
         self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
@@ -192,28 +205,52 @@ class App(Notifier):
         if not self.appInt and not self.devInt: self.initInterfaces()
         with self.device.lock, self.restartNeeded():
             self.device.configureInterface(self.appInt, self.devInt)
+        self.notify('protocol changed', deviceName)
 
     def start(self):
-        if self.commThread:
+        """ Open both ports and run communication loop in a separate thread
+            Returns: True ––► comm launched, False ––► comm is not running, None –-► already running
+        """
+        if self.commThread is not None:
             log.warning("Communication is already launched — ignoring command")
-            return
-        if not self.devInt: raise ApplicationError("Target device is not set")
-        log.info(f"Starting transactions between {self.device.name} via '{self.devInt.token}' "
-                 f"and native control software via '{self.appInt.token}'")
+            return None
+        if not self.devInt:
+            raise ApplicationError("Target device is not set")
+
         log.info("Launching communication...")
+        try:
+            self.appInt.open()
+            self.devInt.open()
+        except SerialError as e:
+            self.appInt.close()
+            self.devInt.close()
+            self.notify('comm dropped')
+            log.fatal(f"Failed to start communication: {e}")
+            log.showStackTrace(e, level='debug')
+            return False
+
         self.stopCommEvent = threading.Event()
-        self.commThread = threading.Thread(
-                name="Communication thread", target=self.commLoop, args=(self.stopCommEvent,))
+        self.commThread = threading.Thread(name="Communication thread",
+                                           target=self.commLoop, args=(self.stopCommEvent,))
+        log.info(f"Starting transactions between {self.device.name} via '{self.devInt.token}' "
+                 f"and native control software via '{self.appInt.token}'...")
         self.commThread.start()
+        return True
 
     def stop(self):
+        """ Stop communication loop and block until it exits
+            Returns: False ––► comm stopped, None –-► has been stopped already
+        """
         if not self.commThread:
             log.warning("Communication is already stopped — ignoring command")
-            return
-        log.info("Interrupting communication...")
-        self.stopCommEvent.set()
+            return None
+        if self.commThread.is_alive():
+            log.info("Interrupting communication...")
+            self.stopCommEvent.set()
         self.commThread.join()
         self.stopCommEvent.clear()
+        self.commThread = None
+        return False
 
     @contextmanager
     def controlSoftErrorsHandler(self):
@@ -226,19 +263,18 @@ class App(Notifier):
                 tlog.warning(f"No reply from {subject} native control soft...")
             else:
                 tlog.debug(f"No reply from {subject} native control soft [{self.appInt.nTimeouts}]")
-        except BadDataError as e:
-            tlog.error(f"Received bad data from {subject} native control soft "
-                       f"(wrong data source is connected to {self.appInt.token}?)")
+            self.notify('comm timeout')
+        except (BadDataError, SerialCommunicationError) as e:
+            if isinstance(e, BadDataError):
+                tlog.error(f"Received bad data from {subject} native control soft "
+                           f"(wrong data source is connected to {self.appInt.token}?)")
+            elif isinstance(e, BadCrcError):
+                tlog.error(f"Checksum validation failed for packet from {subject} native control soft")
+            elif isinstance(e, DataInvalidError):
+                tlog.warning(f"Invalid data received from {subject} native control soft (app misoperation?)")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
-        except BadCrcError as e:
-            tlog.error(f"Checksum validation failed for packet from {subject} native control soft")
-            tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
-        except DataInvalidError as e:
-            tlog.warning(f"Invalid data received from {subject} native control soft (app misoperation?)")
-            tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
+            self.notify('comm error')
         else:
             if self.appInt.nTimeouts:
                 tlog.info(f"Found data from {subject} native control soft after {self.appInt.nTimeouts} timeouts")
@@ -265,22 +301,21 @@ class App(Notifier):
                 tlog.warning(f"No reply from {subject} device...")
             else:
                 tlog.debug(f"No reply from {subject} device [{self.devInt.nTimeouts}]")
+            self.notify('comm timeout')
             # TODO: redesign this ▼ to set new timer interval to 5x transaction period
             #  when scheduler will be used instead of 'for loop' for triggering transactions
             stopEvent.wait(CONFIG.SMALL_TIMEOUT_DELAY if self.devInt.nTimeouts < CONFIG.NO_REPLY_HOPELESS
                            else CONFIG.BIG_TIMEOUT_DELAY)
-        except BadDataError as e:
-            tlog.error(f"Received corrupted data from '{subject}' device")
+        except (BadDataError, SerialCommunicationError) as e:
+            if isinstance(e, BadDataError):
+                tlog.error(f"Received corrupted data from '{subject}' device")
+            elif isinstance(e, BadCrcError):
+                tlog.error(f"Checksum validation failed for packet from {subject} device")
+            elif isinstance(e, DataInvalidError):
+                tlog.error(f"Invalid data received from {subject} device")
             tlog.info("Packet discarded")
             tlog.showError(e, level='debug')
-        except BadCrcError as e:
-            tlog.error(f"Checksum validation failed for packet from {subject} device")
-            tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
-        except DataInvalidError as e:
-            tlog.error(f"Invalid data received from {subject} device")
-            tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
+            self.notify('comm error')
         else:
             if self.devInt.nTimeouts:
                 tlog.info(f"Found data from {subject} device after {self.devInt.nTimeouts} timeouts")
@@ -293,62 +328,69 @@ class App(Notifier):
                 tlog.info(f"{self.devInt.token}: {self.devInt.in_waiting} bytes flushed.")
 
     def commLoop(self, stopEvent):
-        try:
-            with self.appInt, self.devInt:
-                try:
-                    self.commRunning = True
-                    self.nativeSoftConnEstablished = False
-                    log.info("Communication launched")
-                    while True:  # TODO: replace this loop with proper timing-based scheduler
-                        self.nativeData = self.deviceData = None
-                        if (stopEvent.is_set()):
-                            log.info("Received stop communication command.")
-                            break
-                        with self.device.lock:
-                            with self.controlSoftErrorsHandler():
-                                if self.interactWithNativeSoft: self.nativeData = self.device.receiveNative(self.appInt)
-                                else: self.nativeData = self.device.IDLE_PAYLOAD
-                            if self.nativeData is None: continue
+        with self.appInt, self.devInt:
+            self.notify('comm started')
+            try:
+                self.commRunning = True
+                self.nativeSoftConnEstablished = False
+                log.info("Communication launched")
+                while True:  # TODO: replace this loop with proper timing-based scheduler
+                    self.nativeData = self.deviceData = None
+                    if (stopEvent.is_set()):
+                        log.info("Received stop communication command.")
+                        break
+                    with self.device.lock:
 
-                            self.nativeData = self.device.wrap(self.nativeData)
-                            try:
-                                self.devInt.sendPacket(self.nativeData)
-                            except SerialWriteTimeoutError:
-                                tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                                continue  # TODO: what needs to be done when unexpected error happens [2]?
+                        with self.controlSoftErrorsHandler():
+                            if self.interactWithNativeSoft:
+                                self.nativeData = self.device.receiveNative(self.appInt)
+                            else:
+                                self.nativeData = self.device.IDLE_PAYLOAD
+                        if self.nativeData is None: continue
 
-                            with self.deviceErrorsHandler(stopEvent):
-                                self.deviceData = self.devInt.receivePacket()
-                            if self.deviceData is None: continue
+                        self.nativeData = self.device.wrap(self.nativeData)
+                        try:
+                            self.devInt.sendPacket(self.nativeData)
+                        except SerialWriteTimeoutError:
+                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                            self.notify('comm error')
+                            continue  # TODO: what needs to be done when unexpected error happens [2]?
 
-                            self.deviceData = self.device.unwrap(self.deviceData)
-                            try:
-                                if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
-                                    self.device.sendNative(self.appInt, self.deviceData)
-                            except SerialWriteTimeoutError:
-                                if self.nativeSoftConnEstablished is False:  # wait for native control soft to launch
-                                    if self.appInt.nTimeouts < 2:
-                                        tlog.info(f"Waiting for {self.device.name} native control soft to launch")
-                                else:
-                                    tlog.error(f"Failed to send data over {self.appInt.token} "
-                                               f"(native communication soft disconnected?)")
-                                    # TODO: what needs to be done when unexpected error happens [3]?
+                        with self.deviceErrorsHandler(stopEvent):
+                            self.deviceData = self.devInt.receivePacket()
+                        if self.deviceData is None: continue
 
-                            # TODO: self.triggerEvent(ui_update)
+                        self.deviceData = self.device.unwrap(self.deviceData)
+                        try:
+                            if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
+                                self.device.sendNative(self.appInt, self.deviceData)
+                        except SerialWriteTimeoutError:
+                            if self.nativeSoftConnEstablished is False:
+                                # ▼ Wait for native control soft to launch
+                                if self.appInt.nTimeouts == 1:
+                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
+                            else:
+                                tlog.error(f"Failed to send data over {self.appInt.token} "
+                                           f"(native communication soft disconnected?)")
+                                self.notify('comm error')
+                                # TODO: what needs to be done when unexpected error happens [3]?
 
-                except (SerialError, DataInvalidError) as e:
-                    tlog.fatal(f"Transaction failed: {e}")
-                    tlog.showStackTrace(e, level='debug')
-                    # TODO: what needs to be done when unexpected error happens [1]?
-                finally:
-                    self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                    self.commRunning = False
-                    log.info("Communication stopped")
-        except SerialError as e:
-            log.fatal(f"Failed to start communication: {e}")
-            log.showStackTrace(e, level='debug')
-        finally:
-            self.commThread = None
+                        # TODO: self.triggerEvent(ui_update)
+
+            except (SerialError, DataInvalidError) as e:
+                tlog.fatal(f"Transaction failed: {e}")
+                tlog.showStackTrace(e, level='debug')
+                self.notify('comm failed')
+                # TODO: what needs to be done when unexpected error happens [1]?
+            except Exception as e:
+                tlog.fatal(f"Unexpected error happend: {e}")
+                tlog.showStackTrace(e, level='error')
+                self.notify('comm failed')
+            finally:
+                self.appInt.nTimeouts = self.devInt.nTimeouts = 0
+                self.commRunning = False
+                self.notify('comm stopped')
+                log.info("Communication stopped")
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
