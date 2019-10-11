@@ -1,6 +1,6 @@
 from functools import partial
 
-from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex
+from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex, QTimer
 from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
@@ -69,6 +69,7 @@ class UI(QApplication):
         self.deviceCombobox.updateContents()
         setFocusChain(self.root, self.deviceCombobox, self.commPanel,
                       self.testButton1, self.testButton2, self.testButton3, self.testButton4)
+        self.deviceCombobox.setFocus()
         self.window.show()
 
     def bindSignals(self):
@@ -157,7 +158,10 @@ class UI(QApplication):
     def changeProtocol(self):
         protocol = self.deviceCombobox.currentText().upper()
         if protocol.strip() == '': return None
-        if self.app.device is not None and protocol == self.app.device.name:
+        if self.app.device is None:
+            QTimer.singleShot(0, partial(self.commPanel.setDisabled, False))
+            QTimer.singleShot(0, self.commPanel.setFocus)
+        elif protocol == self.app.device.name:
             log.debug(f"Protocol '{protocol}' is already set — cancelling")
             return None
         try:
@@ -165,8 +169,6 @@ class UI(QApplication):
         except ApplicationError as e:
             log.error(e)
             return False
-        if self.app.device is not None:
-            self.commPanel.setDisabled(False)
         self.deviceCombobox.colorer.blink(DisplayColor.Green)
         return True
 
@@ -181,6 +183,7 @@ class UI(QApplication):
 
     def testSlot1(self):
         print(formatDict(self.app.events))
+        self.commPanel.comCombobox.currentIndexChanged.connect(lambda idx: print(f'Changed {idx}'))
 
     def testSlot2(self):
         self.app.addHandler('updated', self.commPanel.testSlotL)
