@@ -1,23 +1,25 @@
 from functools import partial
 
-from PyQt5.QtCore import pyqtSignal, QRegExp
-from PyQt5.QtGui import QPalette, QRegExpValidator
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QAction, QSizePolicy
-from PyQt5.QtWidgets import QPushButton, QComboBox, QLineEdit, QLabel
-from PyQt5Utils import ActionButton, Validator, Colorer, ActionComboBox, ActionLineEdit, CommMode
-from PyQt5Utils import DisplayColor, Block
-from PyQt5Utils import SerialCommPanel
+from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex
+from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy
+from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
+from PyQt5Utils import Block, blockedSignals, setFocusChain
+from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, Colorer, DisplayColor
 from Utils import Logger, formatDict
+from pkg_resources import resource_filename
 
-# TODO: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
+from app import ApplicationError
 
-# TODO: Tab order
+# ✓ Tab order
 
 # TODO: New protocol adding
 
 # ✓ Return exit status from app.commLoop somehow (from another thread)
 
-# TODO: window icon
+# ✓ window icon
+
+# CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
 # CONSIDER: disable animation
 
@@ -25,6 +27,8 @@ from Utils import Logger, formatDict
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
 log = Logger("UI")
+
+ICON = resource_filename(__name__, 'res/icon.png')
 
 
 class UI(QApplication):
@@ -63,6 +67,8 @@ class UI(QApplication):
             self.commPanel.setDisabled(True)
         self.app.init()
         self.deviceCombobox.updateContents()
+        setFocusChain(self.root, self.deviceCombobox, self.commPanel,
+                      self.testButton1, self.testButton2, self.testButton3, self.testButton4)
         self.window.show()
 
     def bindSignals(self):
@@ -76,9 +82,8 @@ class UI(QApplication):
         self.app.addHandler('protocol changed', self.protocolChanged.emit)
         self.app.addHandler('quit', self.quit)
 
-        self.commPanel.bind(CommMode.Continuous, self.triggerContComm)
-        self.commPanel.bind(CommMode.Manual, self.testSendPacketMock)
-        # self.commPanel.bind(CommMode.Smart, self.testSendPacketMock)  # TEMP: uncomment in prod
+        self.commPanel.bind(SerialCommPanel.Mode.Continuous, self.triggerContComm)
+        self.commPanel.bind(SerialCommPanel.Mode.Manual, self.testSendPacketMock)  # TODO: manual mode binding
 
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
         self.protocolChanged.connect(self.commPanel.updateSerialConfig)
@@ -97,7 +102,7 @@ class UI(QApplication):
         # self.centerWindowOnScreen(this)
         this.move(1200, 200)  # TEMP
         this.setWindowTitle(self.title)
-        # this.setWindowIcon(QIcon("sampleIcon.jpg"))
+        this.setWindowIcon(QIcon(ICON))
         return this
 
     def initLayout(self, parent):
@@ -120,17 +125,26 @@ class UI(QApplication):
         def updateContents(this):
             savedText = this.currentText()
             protocols = tuple(name.upper() for name in self.app.protocols.keys())
-            self.deviceCombobox.addItems(protocols)
-            self.deviceCombobox.setCurrentIndex(this.findText(savedText))
+            with blockedSignals(this):
+                this.clear()
+                this.addItems(protocols)
+            this.contents = protocols
+            this.setValidator(QRegexValidator(QRegex('|'.join(this.contents), options=QRegex.CaseInsensitiveOption)))
+            this.colorer.patchValidator()
+            this.setCurrentIndex(this.findText(savedText))
 
-        this = QComboBox(parent=parent)  # TODO: QHoldFocusComboBox
-        # TODO: this.setLineEdit(QAutoSelectLineEdit())
+        this = QHoldFocusComboBox(parent=parent)
+        this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
+        this.colorer = Colorer(widget=this, base=this.lineEdit())
+        this.contents = ()
+
         this.setInsertPolicy(QComboBox.NoInsert)
         this.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
 
         this.updateContents = updateContents.__get__(this, this.__class__)
-        this.lineEdit().editingFinished.connect(self.changeProtocol)  # TEMP: replace with this.triggered.<...>
+        this.triggered.connect(self.changeProtocol)
+        this.lineEdit().textEdited.connect(lambda text: this.setText(text.upper()))
 
         this.setToolTip("Device")
         return this
@@ -141,11 +155,20 @@ class UI(QApplication):
         return this
 
     def changeProtocol(self):
-        protocol = self.deviceCombobox.currentText().lower()
-        if protocol == '': return None
-        self.app.setProtocol(protocol)
+        protocol = self.deviceCombobox.currentText().upper()
+        if protocol.strip() == '': return None
+        if self.app.device is not None and protocol == self.app.device.name:
+            log.debug(f"Protocol '{protocol}' is already set — cancelling")
+            return None
+        try:
+            self.app.setProtocol(protocol.lower())
+        except ApplicationError as e:
+            log.error(e)
+            return False
         if self.app.device is not None:
             self.commPanel.setDisabled(False)
+        self.deviceCombobox.colorer.blink(DisplayColor.Green)
+        return True
 
     def triggerContComm(self, state):
         if state is False:
@@ -178,121 +201,3 @@ class UI(QApplication):
         else:
             print('Emulate packet sent success')
             return True
-
-# ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
-
-    @staticmethod
-    def test_newAction(name, parent, slot, shortcut=None):
-        this = QAction(name, parent)
-        if shortcut: this.setShortcut(shortcut)
-        this.triggered.connect(slot)
-        log.debug(f"Action {name} created: {this}")
-        return this
-
-    def test_addWidgets(self):
-        self.testButton1 = ActionButton("ActionButtonTest", parent=self.window, resize=True, show=True)
-        self.testButton1.move(50, 0)
-        self.testButton2 = ActionButton("&Test2", parent=self.window, resize=True, show=True)
-        self.testButton2.move(200, 0)
-        self.testCombobox = self.test_setTestCombobox()
-        self.testCombobox.move(300, 0)
-        self.testActionCombobox = self.test_setActionCombobox()
-        self.testActionCombobox.move(300, 100)
-        self.testComPanel = self.test_setTestComPanel()
-        self.testComPanel.move(380, 0)
-        self.testInputMaskLineEdit = self.test_setInputMaskLineEdit()
-        self.testInputMaskLineEdit.move(500, 0)
-        self.testLineEdit = self.test_setLineEdit()
-        self.testLineEdit.move(100, 100)
-
-        self.testButton2.clicked.connect(self.test)
-
-    def test_setInputMaskLineEdit(self):
-
-        this = QLineEdit(self.window)
-        this.setInputMask('0->A-0')
-        this.setText('8-N-1')
-        this.setValidator(QRegExpValidator(QRegExp('[6789]-[OEN]-[12]')))
-        this.resize(this.sizeHint())
-        this.setMaximumWidth(50)
-        this.show()
-        return this
-
-    def test_setLineEdit(self):
-        this = ActionLineEdit(parent=self.window)
-        this.setAction(self.test_newAction("TestLineEdit", this, lambda: print("ActionLineEdit triggered")))
-        this.resize(this.sizeHint())
-        this.show()
-        return this
-
-    def test_setActionCombobox(self):
-        this = ActionComboBox(parent=self.window, resize=True, show=True)  # NOTE: kwargs break super()!
-        this.setAction(self.test_newAction("TestActionComboBox", this, lambda: print("ActionCombobox triggered")))
-        this.setValidator(Validator(this, validate=self.testComboboxValidate))
-        this.addItems(('1', '2', '3'))
-        this.resize(this.sizeHint())
-        # this.show()
-        return this
-
-    def test_setTestComPanel(self):
-        from Transceiver import PelengTransceiver
-        from PyQt5Utils import SerialCommPanel
-
-        this = SerialCommPanel(self.window, devInt=PelengTransceiver())
-        return this
-
-    def test_setTestCombobox(self):
-        this = QComboBox(parent=self.window)
-        this.addAction(self.test_newAction("TestComboBox", this, self.testComboboxActionTriggered))
-        this.addItems((pName.upper() for pName in self.app.protocols if len(pName) < 8))
-        this.addItems(('TK-275', 'SMTH'))
-        this.resize(this.sizeHint())
-        this.show()
-        return this
-
-    def testComboboxActionTriggered(self):
-        log.info(f"{self.sender().text()}: new value → {self.sender().data()}")
-        self.sender().parent().ack(True)
-
-    @staticmethod
-    def testComboboxValidate(validator, text, pos):
-        text = text.upper().strip()
-
-        if any(char in text for char in r'<>:"/\|?*'): newState = validator.Invalid
-        elif text.endswith('.'): newState = validator.Intermediate
-        else: newState = validator.Acceptable
-
-        validator.triggered.emit(newState)
-        if validator.state != newState:
-            validator.state = newState
-            validator.validationStateChanged.emit(newState)
-
-        return validator.state, text, pos
-
-    @staticmethod
-    def testComboboxColorize(colorer):
-        role = QPalette.Text
-        text = colorer.target.currentText()
-        items = colorer.target.model().stringList()
-        if text == colorer.target.activeValue:
-            return colorer.ColorSetting(role, Colorer.DisplayColor.Black)
-        if text not in items:
-            if any(item.startswith(text) for item in items):
-                return colorer.ColorSetting(role, Colorer.DisplayColor.Blue)
-            else: return colorer.ColorSetting(role, Colorer.DisplayColor.Red)
-        else: return colorer.ColorSetting(role, Colorer.DisplayColor.Green)
-
-    @staticmethod
-    def testLineEditValidate(validator):
-        ...
-
-
-    def test(self):
-        ...
-        from PyQt5.QtGui import QColor
-        color = QColor("aqua")
-        palette = self.testLineEdit.palette()
-        palette.setColor(QPalette.Base, color)
-        self.testLineEdit.setPalette(palette)
-        # self.testCombobox.lineEdit().setSelection(3, -2)
-        # print(type(self.testComPanel.comChooserCombobox.view()))

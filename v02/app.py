@@ -199,7 +199,6 @@ class App(Notifier):
         self.appInt.port = CONFIG.DEFAULT_APP_COM_PORT
         self.devInt = self.getInterface(self.device.COMMUNICATION_INTERFACE)
         self.devInt.port = CONFIG.DEFAULT_DEV_COM_PORT
-        # self.devInt.device = self.device.DEV_ADDRESS  # TESTME: what was the reason of this line here???
 
     def setProtocol(self, deviceName: str):
         self.device = self.protocols[deviceName]()
@@ -376,7 +375,6 @@ class App(Notifier):
                                 self.notify('comm error')
                                 # TODO: what needs to be done when unexpected error happens [3]?
                         self.notify('comm ok')
-                        # TODO: self.triggerEvent(ui_update)
 
             except (SerialError, DataInvalidError) as e:
                 tlog.fatal(f"Transaction failed: {e}")
