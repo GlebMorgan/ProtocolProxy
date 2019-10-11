@@ -164,6 +164,7 @@ class App(Notifier):
             'comm dropped',      # Failed to configure and open ports
             'comm failed',       # Fatal failure in communication loop
             'comm stopped',      # Communication loop is stopped and communication thread is about to exit
+            'comm ok',           # Transaction controlSoft ⇆ app ⇆ device performed successfully
             'comm timeout',      # Write or read timeout in communication loop
             'comm error'         # Error in packet transmission process (bad data, connection lost, etc.)
         )
@@ -374,7 +375,7 @@ class App(Notifier):
                                            f"(native communication soft disconnected?)")
                                 self.notify('comm error')
                                 # TODO: what needs to be done when unexpected error happens [3]?
-
+                        self.notify('comm ok')
                         # TODO: self.triggerEvent(ui_update)
 
             except (SerialError, DataInvalidError) as e:

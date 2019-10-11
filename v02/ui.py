@@ -17,9 +17,6 @@ from Utils import Logger, formatDict
 
 # ✓ Return exit status from app.commLoop somehow (from another thread)
 
-# TODO: Move Extended widgets classes from CommPanel to PyQt5Utils.ExtendedWidgets
-#       + Block class from ui.py
-
 # TODO: window icon
 
 # CONSIDER: disable animation
@@ -38,6 +35,7 @@ class UI(QApplication):
     commStopped = pyqtSignal()
     commError = pyqtSignal()
     commTimeout = pyqtSignal()
+    commOk = pyqtSignal()
 
     def __init__(self, app, argv):
         super().__init__(argv)
@@ -70,6 +68,7 @@ class UI(QApplication):
     def bindSignals(self):
         self.app.addHandler('comm started', self.commStarted.emit)
         self.app.addHandler('comm dropped', self.commDropped.emit)
+        self.app.addHandler('comm ok', self.commOk.emit)
         self.app.addHandler('comm timeout', self.commTimeout.emit)
         self.app.addHandler('comm error', self.commError.emit)
         self.app.addHandler('comm failed', self.commFailed.emit)
@@ -84,6 +83,11 @@ class UI(QApplication):
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
         self.protocolChanged.connect(self.commPanel.updateSerialConfig)
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
+
+        self.commOk.connect(partial(self.commPanel.indicator.blink, DisplayColor.Green))
+        self.commTimeout.connect(partial(self.commPanel.indicator.blink, DisplayColor.Orange))
+        self.commError.connect(partial(self.commPanel.indicator.blink, DisplayColor.Red))
+        self.commFailed.connect(partial(self.commPanel.indicator.blink, DisplayColor.Red))
 
     def parseArgv(self, argv):
         if '-cmd' in argv: self.app.startCmdThread()
