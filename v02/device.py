@@ -1,3 +1,4 @@
+from functools import partialmethod
 from threading import RLock
 from typing import Union, Mapping, TypeVar
 from Utils import Logger, auto_repr
@@ -32,12 +33,20 @@ class Par(Notifier):
         super().__init__()
         self.alias = alias
         self.type: type = reqType
-        self.value: ParType = reqType()  # ◄ value requested by app
-        self.status: ParType = None  # ◄ value obtained from device
-        self.addEvents('updated', 'altered')
+        self.value: ParType = reqType()  # ◄ value requested by app (target)
+        self.status: ParType = None  # ◄ value obtained from device (recent)
+
+        self.addEvents(
+            'altered',     # requested value changed
+            'new',         # device value changed
+            'connection',  # received first feedback value from device
+            'updated',     # device changed value to most recently requested
+            'unexpected',  # device value change without request
+        )
 
     def __set_name__(self, owner, name):
         self.name = name
+        self.addEvents(*(f'{name} {event}' for event in ('new', 'cnn', 'upd', 'alt', 'uxp')), unique=True)
         log.debug(f"Parameter created: {self}")
 
     def __get__(self, instance, owner):
@@ -48,41 +57,64 @@ class Par(Notifier):
     def __set__(self, instance, newValue):
         self.value = newValue
         self.notify('altered', self.name, newValue)
+        self.notify(f'{self.name} alt')
         log.debug(f"Parameter altered: {self}")
 
     def __str__(self):
         return f"{self.name}={self.value}{'✓' if self.inSync else '↺'}"
 
     def __repr__(self):
-        return auto_repr(self, f"{self.name}={self.value}{'✓' if self.inSync else '↻'}")
+        return auto_repr(self, f"{self.name}={self.value}{'?' if not self.inSync else ''}")
 
     @property
     def inSync(self) -> bool:
         return self.value == self.status
 
     def ack(self, obtainedValue: ParType):
-        if self.inSync:
-            if self.value != obtainedValue:
-                log.warning(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
-        else:
-            if self.value == obtainedValue:
-                self.status = obtainedValue
-                self.notify('updated', self.name, obtainedValue)
+        # Device value have not been changed
+        if obtainedValue == self.status: return
+
+        # First reply
+        if self.status is None:
+            self.notify('connection', self.name, obtainedValue)
+            self.notify(f'{self.name} cnn')
+
+        # Reached sync
+        if obtainedValue == self.value:
+            self.notify('updated', self.name, obtainedValue)
+            self.notify(f'{self.name} upd', obtainedValue)
+            self.status = obtainedValue
+
+        # Device changed value without request
+        elif self.value == self.status != obtainedValue:
+            log.warning(f"Unprompted parameter change from '{self.value}' to '{obtainedValue}'")
+            self.notify('unexpected', self.name, obtainedValue)
+            self.notify(f'{self.name} uxp', obtainedValue)
+
+        # Device value changed
+        self.notify('new', self.name, obtainedValue)
+        self.notify(f'{self.name} new', obtainedValue)
+        self.status = obtainedValue
+
+    set = partialmethod(__set__, None)
 
 
 class Prop(Notifier):
     """ Device-defined """
 
-    __slots__ = 'name', 'alias', 'value'
+    __slots__ = 'name', 'alias', 'value', 'type'
 
     def __init__(self, alias: str, reqType: type):
         super().__init__()
         self.alias = alias
-        self.value: ParType = reqType()
-        self.addEvents('updated')
+        self.type: type = reqType
+        self.value: ParType = None
+        
+        self.addEvents('new')
 
     def __set_name__(self, owner, name):
         self.name = name
+        self.addEvents(f'{name} new', unique=True)
         log.debug(f"Property created: {self}")
 
     def __get__(self, instance, owner):
@@ -93,7 +125,8 @@ class Prop(Notifier):
     def __set__(self, instance, newValue):
         if self.value != newValue:
             self.value = newValue
-            self.notify('updated', self.name, newValue)
+            self.notify('new', self.name, newValue)
+            self.notify(f'{self.name} new', newValue)
             log.debug(f"Property updated: {self}")
 
     def __str__(self):
@@ -101,6 +134,8 @@ class Prop(Notifier):
 
     def __repr__(self):
         return auto_repr(self, f"{self.name}={self.value}")
+
+    set = partialmethod(__set__, None)
 
 
 class Device:
