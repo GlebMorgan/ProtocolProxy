@@ -42,7 +42,7 @@ class SONY(Device):
         self.validateReply(packet)
         cls = self.__class__
         POWER_STATE, RESET_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE = flags(packet[0], 4)
-        # ▼ access parameters via class to get a descriptor, not parameter value
+        # ▼ Access parameters via class to get a descriptor, not parameter value
         cls.POWER.ack(POWER_STATE)
         cls.RESET.ack(RESET_STATE)
         cls.VIDEO_IN_EN.ack(VIDEO_IN_STATE)
@@ -51,7 +51,8 @@ class SONY(Device):
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
-        if data == b'\x00' * 16: data = self.APP_TERMINATOR  # ◄ SONY native control software does not accept '00's
+        # ▼ SONY native control software does not accept '00's
+        if data == b'\x00' * 16: data = self.APP_TERMINATOR
         endIndex = data.find(self.APP_TERMINATOR)
         return com.write(data[:endIndex+1])
 
@@ -66,9 +67,9 @@ class SONY(Device):
     def readUpToFirstFF(com):
         byte = com.read()
         while byte == b'\xFF':
-            byte = com.read()  # ◄ skip all leading 'FF's
+            byte = com.read()  # skip all leading 'FF's
         yield byte
-        for _ in range(15):  # ◄ 1 byte has been already read a line above
+        for _ in range(15):  # 1 byte has been already read a line above
             byte = com.read()
             yield byte
             if byte == b'\xFF': return

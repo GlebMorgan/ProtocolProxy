@@ -13,7 +13,7 @@ from app import ApplicationError
 
 # ✓ Tab order
 
-# TODO: New protocol adding
+# ✗ New protocol adding
 
 # ✓ Return exit status from app.commLoop somehow (from another thread)
 
