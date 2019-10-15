@@ -1,6 +1,9 @@
 from typing import MutableMapping, Callable, NewType, List
 
+from Utils import Logger
 from orderedset import OrderedSet
+
+log = Logger('Notifier')
 
 # True ––► .notify() and .addHandler() will work only for existing events (no dynamic event creation)
 # False ––► .notify() and .addHandler() executed on non-existent event will create new one on-the-fly
@@ -13,8 +16,10 @@ class Notifier:
     events: MutableMapping[str, OrderedSet] = {}
 
     @classmethod
-    def addEvents(cls, *events: str):
+    def addEvents(cls, *events: str, unique: bool = False):
         for event in events:
+            if event in cls.events and unique is True:
+                raise ValueError(f"Event '{event}' already exists")
             cls.events[event] = OrderedSet()
 
     @classmethod
