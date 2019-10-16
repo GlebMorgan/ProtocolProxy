@@ -1,8 +1,8 @@
 from functools import partial
-from typing import Union, NamedTuple, Callable, Type, Optional
+from typing import Union
 
 from PyQt5.QtGui import QIntValidator
-from PyQt5.QtWidgets import QWidget, QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QPushButton
+from PyQt5.QtWidgets import QWidget, QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QSizePolicy
 from PyQt5Utils import QAutoSelectLineEdit, Colorer, DisplayColor, install_exhook, QRightclickButton
 from Utils import Logger
 
@@ -12,13 +12,24 @@ from notifier import Notifier
 log = Logger("Entry")
 
 
-class Entry(QWidget):
-    def __init__(self, parent, target: Union[Par, Prop], name: str = None, *args,
+class Entry:
+    def __new__(cls, target: Union[Par, Prop], *args, **kwargs):
+        if isinstance(target, Par):
+            return ParEntry(target, *args)
+        elif isinstance(target, Prop):
+            return PropEntry(target, *args)
+        else:
+            raise TypeError(f"Invalid target parameter type "
+                            f"'{target.__class__.__name__}', expected 'Par' or 'Prop'")
+
+
+class EntryBase(QWidget):
+    def __init__(self, target: Union[Par, Prop], parent: QWidget, name: str = None, *args,
                  label: bool, input: bool, echo: bool):
 
         super().__init__(parent, *args)
 
-        self.name: str = name if name is not None else target.name
+        self.label: str = name if name is not None else target.label
         self.par = target
         self.type: type = target.type
 
@@ -28,10 +39,10 @@ class Entry(QWidget):
                 self.signal = self.input.stateChanged
                 self.fetcher = self.input.isChecked
                 self.setter = self.input.setChecked
-                self.widgetType = bool
             if echo:
                 self.echo = QCheckBox(self)
                 self.slot = self.echo.setChecked
+                self.widgetType = bool
         else:
             if self.type is not int:
                 log.warning(f"Unsupported entry type {self.type}, number representation is used")
@@ -43,21 +54,27 @@ class Entry(QWidget):
                 self.signal.connect(self.inputSetUpdated)
                 self.fetcher = self.input.text
                 self.setter = self.input.setText
-                self.widgetType = str
             if echo:
                 self.echo = QLabel(self)
                 self.slot = self.echo.setText
+                self.widgetType = str
 
         if label:
-            self.label: QLabel = QLabel(f'{self.name}:', self)
+            self.label: QLabel = QLabel(f'{self.label}:', self)
 
         self.echo.setDisabled(True)
-        self.echo.setVisible(False)
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
+
+        Notifier.addHandler(f'{self.par.name} new', self.updateEcho)
+
+    def sizeHint(self):
+        return QAutoSelectLineEdit().sizeHint()
 
     def initLayout(self):
         fontSpacing = self.font().pointSize()
         layout = QHBoxLayout()
         layout.setSpacing(fontSpacing)
+        layout.setContentsMargins(*(fontSpacing/4,)*4)
 
         for widgetName in ('label', 'input', 'echo'):
             try: layout.addWidget(getattr(self, widgetName))
@@ -92,25 +109,25 @@ class Entry(QWidget):
         self.slot(self.widgetType(value))
 
 
-class PropEntry(Entry):
+class PropEntry(EntryBase):
 
     def __init__(self, *args):
         super().__init__(*args, label=True, input=False, echo=True)
 
-        Notifier.addHandler(f'{self.par.name} new', self.updateEcho)
-
         self.initLayout()
 
 
-class ParEntry(Entry):
+class ParEntry(EntryBase):
 
     def __init__(self, *args):
         super().__init__(*args, label=True, input=True, echo=True)
+
         self.input.colorer = Colorer(self.input)
+        self.echo.setVisible(False)
+
         self.setter(self.widgetType(self.par.value))
         self.signal.connect(self.updatePar)
 
-        Notifier.addHandler(f'{self.par.name} new', self.updateEcho)
         Notifier.addHandler(f'{self.par.name} cnn', self.showEcho)
         Notifier.addHandler(f'{self.par.name} upd', partial(self.input.colorer.setBaseColor, None))
         Notifier.addHandler(f'{self.par.name} upd', partial(self.input.colorer.blink, DisplayColor.Green))
@@ -140,10 +157,10 @@ if __name__ == '__main__':
     def sign(x): return 0 if x == 0 else int(x//abs(x))
 
     class TestDevice:
-        testParInt = Par('ti', int)
-        testParBool = Par('tb', bool)
-        testPropInt = Prop('tpi', int)
-        testPropBool = Prop('tpb', bool)
+        testParInt = Par('testParInt', 'ti', int)
+        testParBool = Par('testParBool', 'tb', bool)
+        testPropInt = Prop('testPropInt', 'tpi', int)
+        testPropBool = Prop('testPropBool', 'tpb', bool)
 
     dev = TestDevice()
     dev.testParInt = 7
@@ -153,10 +170,10 @@ if __name__ == '__main__':
 
     l = QVBoxLayout()
 
-    PropInt = PropEntry(p, TestDevice.testPropInt, 'TestPropIntLabel')
-    PropBool = PropEntry(p, TestDevice.testPropBool, 'TestPropBoolLabel')
-    ParInt = ParEntry(p, TestDevice.testParInt, 'TestParIntLabel')
-    ParBool = ParEntry(p, TestDevice.testParBool, 'TestParBoolLabel')
+    PropInt = PropEntry(TestDevice.testPropInt, p, 'TestPropIntLabel')
+    PropBool = PropEntry(TestDevice.testPropBool, p, 'TestPropBoolLabel')
+    ParInt = ParEntry(TestDevice.testParInt, p, 'TestParIntLabel')
+    ParBool = ParEntry(TestDevice.testParBool, p, 'TestParBoolLabel')
 
     TestParIntButton = QRightclickButton('Test ParInt', p)
     parObjInt = TestDevice.testParInt
