@@ -23,14 +23,14 @@ class SONY(Device):
     APP_TERMINATOR: bytes = b'\xFF'
 
     # Master-driven parameters
-    POWER = Par('p', bool)
-    RESET = Par('r', bool)
-    VIDEO_IN_EN = Par('vin', bool)
-    VIDEO_OUT_EN = Par('vout', bool)
+    POWER = Par('Power', 'p', bool)
+    RESET = Par('Reset', 'r', bool)
+    VIDEO_IN_EN = Par('Sony video receiver', 'vin', bool)
+    VIDEO_OUT_EN = Par('Output video transmitter', 'vout', bool)
 
     # Device-driven properties
-    CNT_IN = Prop('in', int)
-    CNT_OUT = Prop('out', int)
+    CNT_IN = Prop('Incoming msgs counter', 'in', int)
+    CNT_OUT = Prop('Outgoing msgs counter', 'out', int)
 
     def wrap(self, data: bytes) -> bytes:
         if data != self.IDLE_PAYLOAD: self.CNT_IN += 1

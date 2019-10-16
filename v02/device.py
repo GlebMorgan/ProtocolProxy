@@ -29,8 +29,9 @@ class Par(Notifier):
 
     __slots__ = 'name', 'alias', 'value', 'status', 'type'
 
-    def __init__(self, alias: str, reqType: type):
+    def __init__(self, label: str, alias: str, reqType: type):
         super().__init__()
+        self.label = label
         self.alias = alias
         self.type: type = reqType
         self.value: ParType = reqType()  # ◄ value requested by app (target)
@@ -104,8 +105,9 @@ class Prop(Notifier):
 
     __slots__ = 'name', 'alias', 'value', 'type'
 
-    def __init__(self, alias: str, reqType: type):
+    def __init__(self, label: str, alias: str, reqType: type):
         super().__init__()
+        self.label = label
         self.alias = alias
         self.type: type = reqType
         self.value: ParType = None

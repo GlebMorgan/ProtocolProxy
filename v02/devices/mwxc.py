@@ -25,12 +25,12 @@ class MWXC(Device):
     APP_PACKET_SIZE: int = 13
 
     # Master-driven parameters
-    POWER = Par('p', bool)  # ack by POWER_STATE device property
-    VIDEO_OUT_EN = Par('vout', bool)  # ack by VIDEO_OUT_STATE device property
+    POWER = Par('Power', 'p', bool)  # ack by POWER_STATE device property
+    VIDEO_OUT_EN = Par('Video transmitter', 'vout', bool)  # ack by VIDEO_OUT_STATE device property
 
     # Device-driven properties
-    VIDEO_IN_STATE = Prop('vin', bool)
-    CTRL_CHNL_STATE = Prop('c', bool)
+    VIDEO_IN_STATE = Prop('IR video receiver', 'vin', bool)
+    CTRL_CHNL_STATE = Prop('IR control channel', 'c', bool)
 
     def wrap(self, data: bytes) -> bytes:
         with self.lock:
