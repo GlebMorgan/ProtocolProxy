@@ -1,8 +1,9 @@
 from functools import partial
+from typing import Tuple, Iterable
 
 from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex, QTimer
 from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
 from PyQt5Utils import Block, blockedSignals, setFocusChain
 from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, Colorer, DisplayColor
@@ -10,6 +11,8 @@ from Utils import Logger, formatDict
 from pkg_resources import resource_filename
 
 from app import ApplicationError
+from device import Device
+from entry import Entry
 
 # ✓ Tab order
 
@@ -31,6 +34,32 @@ log = Logger("UI")
 ICON = resource_filename(__name__, 'res/icon.png')
 
 
+class ControlPanel(QStackedWidget):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.panels = {}
+
+    def switch(self, device: Device):
+        name = device.name.lower()
+        if name not in self.panels.keys():
+            self.panels[name] = self.newPanel(device)
+        self.setCurrentWidget(self.panels[name])
+        self.setMaximumHeight(self.panels[name].sizeHint().height())
+        # return self.setCurrentIndex(0)
+
+    def newPanel(self, entries: Iterable):
+        container = QWidget(self)
+        layout = QVBoxLayout()
+        spacing = self.parent().spacing
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        for par in entries:
+            layout.addWidget(Entry(par, container))
+        container.setLayout(layout)
+        self.addWidget(container)
+        return container
+
+
 class UI(QApplication):
     protocolChanged = pyqtSignal(str)
     commStarted = pyqtSignal()
@@ -43,17 +72,20 @@ class UI(QApplication):
 
     def __init__(self, app, argv):
         super().__init__(argv)
+
         self.title = f"{app.PROJECT_NAME} v{app.VERSION} © 2019 GlebMorgan"
         self.app = app
 
         self.window = self.setUiWindow()
         self.root = QWidget(self.window)
+        self.root.spacing = self.font().pointSize()
+
         self.commPanel = SerialCommPanel(self.root, app.devInt)
         self.deviceCombobox = self.newDeviceCombobox(self.root)
-        self.testButton1 = self.newTestButton(self.root, 1)
-        self.testButton2 = self.newTestButton(self.root, 2)
-        self.testButton3 = self.newTestButton(self.root, 3)
-        self.testButton4 = self.newTestButton(self.root, 4)
+        self.controlPanel = ControlPanel(self.root)
+
+        for i in range(1, 5):
+            setattr(self, f'testButton{i}', self.newTestButton(self.root, i))
 
         self.parseArgv(argv)
         self.setup()
@@ -65,6 +97,8 @@ class UI(QApplication):
         self.window.setCentralWidget(self.root)
         if self.app.device is None:
             self.commPanel.setDisabled(True)
+        else:
+            self.changeProtocol(self.app.device.name)
         self.app.init()
         self.deviceCombobox.updateContents()
         setFocusChain(self.root, self.deviceCombobox, self.commPanel,
@@ -107,20 +141,21 @@ class UI(QApplication):
         return this
 
     def initLayout(self, parent):
-        fontSpacing = self.font().pointSize()
-        with Block(parent, layout='v', spacing=fontSpacing, margins=fontSpacing) as main:
-            with Block(main, layout='h', spacing=0) as toolpanel:
-                toolpanel.addWidget(QLabel("Device", self.root))
-                toolpanel.addWidget(self.deviceCombobox)
-                toolpanel.addSpacing(fontSpacing)
-                toolpanel.addWidget(self.commPanel)
-                toolpanel.addStretch()
-            with Block(main, layout='h', spacing=fontSpacing) as testpanel:
-                testpanel.addWidget(self.testButton1)
-                testpanel.addWidget(self.testButton2)
-                testpanel.addWidget(self.testButton3)
-                testpanel.addWidget(self.testButton4)
-            main.addStretch()
+        spacing = self.root.spacing
+        with Block(parent, layout='v', spacing=spacing, margins=spacing, attr='mainLayout') as main:
+            with Block(main, layout='h', spacing=0, attr='toolLayout') as tools:
+                tools.addWidget(QLabel("Device", self.root))
+                tools.addWidget(self.deviceCombobox)
+                tools.addSpacing(spacing)
+                tools.addWidget(self.commPanel)
+            with Block(main, layout='v', spacing=spacing, attr='entriesLayout') as controls:
+                controls.addWidget(self.controlPanel)
+                controls.addStretch()
+            with Block(main, layout='h', spacing=spacing, attr='testLayout') as test:
+                test.addWidget(self.testButton1)
+                test.addWidget(self.testButton2)
+                test.addWidget(self.testButton3)
+                test.addWidget(self.testButton4)
 
     def newDeviceCombobox(self, parent):
         def updateContents(this):
@@ -130,7 +165,8 @@ class UI(QApplication):
                 this.clear()
                 this.addItems(protocols)
             this.contents = protocols
-            this.setValidator(QRegexValidator(QRegex('|'.join(this.contents), options=QRegex.CaseInsensitiveOption)))
+            this.setValidator(QRegexValidator(
+                    QRegex('|'.join(this.contents), options=QRegex.CaseInsensitiveOption)))
             this.colorer.patchValidator()
             this.setCurrentIndex(this.findText(savedText))
 
@@ -155,20 +191,26 @@ class UI(QApplication):
         this.clicked.connect(getattr(self, f'testSlot{n}'))
         return this
 
-    def changeProtocol(self):
-        protocol = self.deviceCombobox.currentText().upper()
-        if protocol.strip() == '': return None
+    def changeProtocol(self, protocol=None):
+        if protocol is None:
+            protocol = self.deviceCombobox.currentText().upper()
+        if protocol.strip() == '':
+            return None
+
         if self.app.device is None:
             QTimer.singleShot(0, partial(self.commPanel.setDisabled, False))
             QTimer.singleShot(0, self.commPanel.setFocus)
         elif protocol == self.app.device.name:
             log.debug(f"Protocol '{protocol}' is already set — cancelling")
             return None
+
         try:
             self.app.setProtocol(protocol.lower())
         except ApplicationError as e:
             log.error(e)
             return False
+
+        self.controlPanel.switch(self.app.device)
         self.deviceCombobox.colorer.blink(DisplayColor.Green)
         return True
 
