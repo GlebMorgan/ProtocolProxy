@@ -110,7 +110,7 @@ class Prop(Notifier):
         self.label = label
         self.alias = alias
         self.type: type = reqType
-        self.value: ParType = None
+        self.value: ParType = reqType()
         
         self.addEvents('new')
 

@@ -3,6 +3,9 @@ from typing import MutableMapping, Callable, NewType, List
 from Utils import Logger
 from orderedset import OrderedSet
 
+# TODO: make events lifecycle same as object that added them
+#   (delete events together with object removing since it cannot initiate those events anymore regardless)
+
 log = Logger('Notifier')
 
 # True ––► .notify() and .addHandler() will work only for existing events (no dynamic event creation)
