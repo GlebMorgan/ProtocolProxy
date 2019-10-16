@@ -162,6 +162,23 @@ class Device:
 
     API: Mapping[str, Union[Par, Prop]] = None  # device control external API
 
+    def __init__(self):
+        self.lock = RLock()
+        self.name = self.__class__.__name__
+        self.params = tuple(slot for slot in vars(self.__class__).values() if isinstance(slot, Par))
+        self.props = tuple(slot for slot in vars(self.__class__).values() if isinstance(slot, Prop))
+        self.API = {slot.alias: slot for slot in vars(self.__class__).values() if isinstance(slot, (Par, Prop))}
+
+    def __iter__(self):
+        yield from self.API.values()
+
+    def __str__(self):
+        return f"{self.__class__.__name__}{'✓' if all(par.inSync for par in self.params) else '↺'} " \
+               f"({', '.join((str(slot) for slot in self))})"
+
+    def __repr__(self):
+        return auto_repr(self, '✓' if all(par.inSync for par in self.params) else '↺')
+
     def wrap(self, data: bytes) -> bytes:
         return NotImplemented
 
@@ -203,19 +220,3 @@ class Device:
             log.info(f"In/out {self.COMMUNICATION_INTERFACE} interfaces reconfigured for {self.name} protocol")
         else:
             raise NotImplementedError(f"Interface {self.COMMUNICATION_INTERFACE} is not supported")
-
-    def __init__(self):
-        self.lock = RLock()
-        self.name = self.__class__.__name__
-        self.params = tuple(slot for slot in vars(self.__class__).values() if isinstance(slot, Par))
-        self.API = {slot.alias: slot for slot in vars(self.__class__).values() if isinstance(slot, (Par, Prop))}
-
-    def __iter__(self):
-        yield from self.API.values()
-
-    def __str__(self):
-        return f"{self.__class__.__name__}{'✓' if all(par.inSync for par in self.params) else '↺'} " \
-               f"({', '.join((str(slot) for slot in self))})"
-
-    def __repr__(self):
-        return auto_repr(self, '✓' if all(par.inSync for par in self.params) else '↺')
