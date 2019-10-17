@@ -13,6 +13,7 @@ from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict
 from device import Device, DataInvalidError
 from notifier import Notifier
 from Transceiver import SerialTransceiver, PelengTransceiver
+from Transceiver.errors import VerboseError
 from Transceiver.errors import *
 
 log = Logger("App")
@@ -264,16 +265,19 @@ class App(Notifier):
             else:
                 tlog.debug(f"No reply from {subject} native control soft [{self.appInt.nTimeouts}]")
             self.notify('comm timeout')
-        except (BadDataError, SerialCommunicationError) as e:
+        except (DataInvalidError, SerialCommunicationError) as e:
             if isinstance(e, BadDataError):
-                tlog.error(f"Received bad data from {subject} native control soft "
+                tlog.error(f"Received bad data from {subject} native control soft:\n{e}\n"
                            f"(wrong data source is connected to {self.appInt.token}?)")
             elif isinstance(e, BadCrcError):
-                tlog.error(f"Checksum validation failed for packet from {subject} native control soft")
+                tlog.error(f"Checksum validation failed for packet from {subject} native control soft:\n{e}")
             elif isinstance(e, DataInvalidError):
-                tlog.warning(f"Invalid data received from {subject} native control soft (app misoperation?)")
+                tlog.error(f"Invalid data received from {subject} native control soft:\n{e}")
+            else:
+                tlog.error(e)
             tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
+            if isinstance(e, VerboseError):
+                tlog.showError(e, level='debug')
             self.notify('comm error')
         else:
             if self.appInt.nTimeouts:
@@ -306,15 +310,18 @@ class App(Notifier):
             #  when scheduler will be used instead of 'for loop' for triggering transactions
             stopEvent.wait(CONFIG.SMALL_TIMEOUT_DELAY if self.devInt.nTimeouts < CONFIG.NO_REPLY_HOPELESS
                            else CONFIG.BIG_TIMEOUT_DELAY)
-        except (BadDataError, SerialCommunicationError) as e:
+        except (DataInvalidError, SerialCommunicationError) as e:
             if isinstance(e, BadDataError):
-                tlog.error(f"Received corrupted data from '{subject}' device")
+                tlog.error(f"Received corrupted data from '{subject}' device:\n{e}")
             elif isinstance(e, BadCrcError):
-                tlog.error(f"Checksum validation failed for packet from {subject} device")
+                tlog.error(f"Checksum validation failed for packet from {subject} device:\n{e}")
             elif isinstance(e, DataInvalidError):
-                tlog.error(f"Invalid data received from {subject} device")
+                tlog.error(f"Invalid data received from {subject} device:\n{e}")
+            else:
+                tlog.error(e)
             tlog.info("Packet discarded")
-            tlog.showError(e, level='debug')
+            if isinstance(e, VerboseError):
+                tlog.showError(e, level='debug')
             self.notify('comm error')
         else:
             if self.devInt.nTimeouts:
@@ -376,7 +383,7 @@ class App(Notifier):
                                 # TODO: what needs to be done when unexpected error happens [3]?
                         self.notify('comm ok')
 
-            except (SerialError, DataInvalidError) as e:
+            except SerialError as e:
                 tlog.fatal(f"Transaction failed: {e}")
                 tlog.showStackTrace(e, level='debug')
                 self.notify('comm failed')
