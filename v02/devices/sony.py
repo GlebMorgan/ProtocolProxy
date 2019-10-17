@@ -78,7 +78,7 @@ class SONY(Device):
     def validateCommandNative(self, packet: bytes):
         assert(packet[-1] == self.APP_TERMINATOR[0])
         if flag(packet[0], 7) is not True:
-            log.warning("First byte is invalid SONY message header (wrong data source is on the line?)")
+            log.error("First byte is invalid SONY message header (wrong data source is on the line?)")
         if packet[1] not in (0x1, 0x9, 0x21, 0x22, 0x30, 0x38):
             log.warning(f"Unknown command type: {packet[1]}")
 

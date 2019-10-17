@@ -47,7 +47,7 @@ class Par(Notifier):
 
     def __set_name__(self, owner, name):
         self.name = name
-        self.addEvents(*(f'{name} {event}' for event in ('new', 'cnn', 'upd', 'alt', 'uxp')), unique=True)
+        self.addEvents(*(f'{name} {event}' for event in ('new', 'cnn', 'upd', 'alt', 'uxp')))
         log.debug(f"Parameter created: {self}")
 
     def __get__(self, instance, owner):
