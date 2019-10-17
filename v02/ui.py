@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVB
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
 from PyQt5Utils import Block, blockedSignals, setFocusChain
 from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, Colorer, DisplayColor
+from PyQt5Utils.extended_widgets import QFixLabel
 from Utils import Logger, formatDict
 from pkg_resources import resource_filename
 
@@ -117,13 +118,17 @@ class UI(QApplication):
         self.app.addHandler('protocol changed', self.protocolChanged.emit)
         self.app.addHandler('quit', self.quit)
 
+        # Communication bindings
         self.commPanel.bind(SerialCommPanel.Mode.Continuous, self.triggerContComm)
         self.commPanel.bind(SerialCommPanel.Mode.Manual, self.testSendPacketMock)  # TODO: manual mode binding
 
+        # Update commPanel interface
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
-        self.protocolChanged.connect(self.commPanel.updateSerialConfig)
+
+        # Indicate communication failure
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
 
+        # Indicator blinking
         self.commOk.connect(partial(self.commPanel.indicator.blink, DisplayColor.Green))
         self.commTimeout.connect(partial(self.commPanel.indicator.blink, DisplayColor.Orange))
         self.commError.connect(partial(self.commPanel.indicator.blink, DisplayColor.Red))
@@ -144,8 +149,9 @@ class UI(QApplication):
         spacing = self.root.spacing
         with Block(parent, layout='v', spacing=spacing, margins=spacing, attr='mainLayout') as main:
             with Block(main, layout='h', spacing=0, attr='toolLayout') as tools:
-                tools.addWidget(QLabel("Device", self.root))
+                tools.addWidget(QFixLabel("Device", self.root))
                 tools.addWidget(self.deviceCombobox)
+                tools.addStretch(3)
                 tools.addSpacing(spacing)
                 tools.addWidget(self.commPanel)
             with Block(main, layout='v', spacing=spacing, attr='entriesLayout') as controls:
@@ -198,8 +204,8 @@ class UI(QApplication):
             return None
 
         if self.app.device is None:
-            QTimer.singleShot(0, partial(self.commPanel.setDisabled, False))
-            QTimer.singleShot(0, self.commPanel.setFocus)
+            self.commPanel.setDisabled(False)
+            self.commPanel.setFocus()
         elif protocol == self.app.device.name:
             log.debug(f"Protocol '{protocol}' is already set — cancelling")
             return None
@@ -216,11 +222,10 @@ class UI(QApplication):
 
     def triggerContComm(self, state):
         if state is False:
-            self.deviceCombobox.setDisabled(True)
             status = self.app.start()
         else:
             status = self.app.stop()
-            self.deviceCombobox.setDisabled(False)
+        self.deviceCombobox.setDisabled(status)
         return status
 
     def testSlot1(self):
