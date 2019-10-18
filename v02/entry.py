@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Union
 
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import QWidget, QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QSizePolicy
 from PyQt5Utils import QAutoSelectLineEdit, Colorer, DisplayColor, install_exhook, QRightclickButton
@@ -24,6 +25,9 @@ class Entry:
 
 
 class EntryBase(QWidget):
+
+    valueChanged = pyqtSignal(object)
+
     def __init__(self, target: Union[Par, Prop], parent: QWidget, name: str = None, *args,
                  label: bool, input: bool, echo: bool):
 
@@ -65,8 +69,6 @@ class EntryBase(QWidget):
         self.echo.setDisabled(True)
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
 
-        Notifier.addHandler(f'{self.par.name} new', self.updateEcho)
-
     def sizeHint(self):
         return QAutoSelectLineEdit().sizeHint()
 
@@ -88,6 +90,10 @@ class EntryBase(QWidget):
 
         self.setLayout(layout)
 
+    def bindSignals(self):
+        Notifier.addHandler(f'{self.par.name} new', self.valueChanged.emit)
+        self.valueChanged.connect(self.updateEcho)
+
     def inputSetUpdated(self):
         try: colorize = self.input.colorer.setBaseColor
         except AttributeError: return
@@ -102,9 +108,6 @@ class EntryBase(QWidget):
             else:
                 colorize(None)
 
-    def showEcho(self):
-        self.echo.setVisible(True)
-
     def updateEcho(self, value):
         self.slot(self.widgetType(value))
 
@@ -114,10 +117,16 @@ class PropEntry(EntryBase):
     def __init__(self, *args):
         super().__init__(*args, label=True, input=False, echo=True)
 
+        self.bindSignals()
         self.initLayout()
 
 
 class ParEntry(EntryBase):
+
+    valueInit = pyqtSignal(object)
+    valueUpdated = pyqtSignal(object)
+    valueUnexp = pyqtSignal(object)
+    valueAltd = pyqtSignal(object)
 
     def __init__(self, *args):
         super().__init__(*args, label=True, input=True, echo=True)
@@ -128,15 +137,35 @@ class ParEntry(EntryBase):
         self.setter(self.widgetType(self.par.value))
         self.signal.connect(self.updatePar)
 
-        Notifier.addHandler(f'{self.par.name} cnn', self.showEcho)
-        Notifier.addHandler(f'{self.par.name} upd', partial(self.input.colorer.setBaseColor, None))
-        Notifier.addHandler(f'{self.par.name} upd', partial(self.input.colorer.blink, DisplayColor.Green))
-        Notifier.addHandler(f'{self.par.name} uxp', partial(self.input.colorer.blink, DisplayColor.Red))
-
+        self.bindSignals()
         self.initLayout()
+
+    def bindSignals(self):
+        super().bindSignals()
+
+        Notifier.addHandler(f'{self.par.name} cnn', self.valueInit.emit)
+        Notifier.addHandler(f'{self.par.name} upd', self.valueUpdated.emit)
+        Notifier.addHandler(f'{self.par.name} uxp', self.valueUnexp.emit)
+        Notifier.addHandler(f'{self.par.name} alt', self.valueAltd.emit)
+
+        self.valueInit.connect(self.initEcho)
+
+        # sync / out of sync
+        colorer = self.input.colorer
+        self.valueUpdated.connect(partial(colorer.setBaseColor, None))
+        self.valueUpdated.connect(partial(colorer.blink, DisplayColor.Green))
+        self.valueUnexp.connect(partial(colorer.setBaseColor, DisplayColor.LightRed))
+        self.valueUnexp.connect(partial(colorer.blink, DisplayColor.Red))
 
     def updatePar(self):
         return self.par.set(self.type(self.fetcher()))
+
+    def initEcho(self):
+        self.echo.setVisible(True)
+
+        self.valueAltd.connect(lambda: self.input.colorer.setBaseColor(
+                                           None if self.par.inSync else DisplayColor.LightRed))
+
 
 # ———————————————————————————————————————————————————————————————————————————————————————————————————————————————————— #
 
