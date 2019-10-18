@@ -82,8 +82,9 @@ class ProtocolLoader(dict):
 
 class CONFIG(ConfigLoader, section='APP'):
     DEVICES_FOLDER_REL: str = 'devices'
-    DEFAULT_APP_COM_PORT: str = 'COM11'
-    DEFAULT_DEV_COM_PORT: str = 'COM1'
+    APP_COM_PORT: str = 'COM11'     # virtual port for App
+    NATIVE_COM_PORT: str = 'COM10'  # virtual port for NCS
+    DEV_COM_PORT: str = 'COM1'      # real port for Device
     DEVICE_TIMEOUT: float = 0.5  # sec
     SMALL_TIMEOUT_DELAY: float = 0.5  # sec
     BIG_TIMEOUT_DELAY: int = 5  # sec
@@ -197,9 +198,9 @@ class App(Notifier):
 
     def initInterfaces(self):
         self.appInt = SerialTransceiver()
-        self.appInt.port = CONFIG.DEFAULT_APP_COM_PORT
+        self.appInt.port = CONFIG.APP_COM_PORT
         self.devInt = self.getInterface(self.device.COMMUNICATION_INTERFACE)
-        self.devInt.port = CONFIG.DEFAULT_DEV_COM_PORT
+        self.devInt.port = CONFIG.DEV_COM_PORT
 
     def setProtocol(self, deviceName: str):
         self.device = self.protocols[deviceName]()
