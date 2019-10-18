@@ -58,7 +58,7 @@ class Par(Notifier):
     def __set__(self, instance, newValue):
         self.value = newValue
         self.notify('altered', self.name, newValue)
-        self.notify(f'{self.name} alt')
+        self.notify(f'{self.name} alt', newValue)
         log.debug(f"Parameter altered: {self}")
 
     def __str__(self):
@@ -78,7 +78,7 @@ class Par(Notifier):
         # First reply
         if self.status is None:
             self.notify('connection', self.name, obtainedValue)
-            self.notify(f'{self.name} cnn')
+            self.notify(f'{self.name} cnn', obtainedValue)
 
         # Reached sync
         if obtainedValue == self.value:
