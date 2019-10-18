@@ -43,8 +43,8 @@ class MWXC(Device):
         # ▼ access parameters via class to get a descriptor, not parameter value
         cls.POWER.ack(POWER_STATE)
         cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
-        cls.VIDEO_IN = VIDEO_IN_STATE
-        cls.CTRL = CTRL_CHNL_STATE
+        self.VIDEO_IN_STATE = VIDEO_IN_STATE
+        self.CTRL_CHNL_STATE = CTRL_CHNL_STATE
         return packet[1:]
 
     def sendNative(self, com, data: bytes) -> int:

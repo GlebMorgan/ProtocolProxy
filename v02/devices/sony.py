@@ -47,7 +47,7 @@ class SONY(Device):
         cls.RESET.ack(RESET_STATE)
         cls.VIDEO_IN_EN.ack(VIDEO_IN_STATE)
         cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
-        cls.CNT_OUT = packet[1]
+        self.CNT_OUT = packet[1]
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
