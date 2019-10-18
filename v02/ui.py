@@ -11,7 +11,7 @@ from PyQt5Utils.extended_widgets import QFixLabel
 from Utils import Logger, formatDict
 from pkg_resources import resource_filename
 
-from app import ApplicationError
+from app import ApplicationError, CONFIG
 from device import Device
 from entry import Entry
 
@@ -23,6 +23,18 @@ from entry import Entry
 
 # ✓ window icon
 
+# TODO: Put maximum amount of parameters in CONFIG
+
+# ✓ Fix window icon
+
+# TODO: Communicate with NCS checkbox
+
+# ✓ Some where-to-connect NCS UI hint
+
+# TODO: Smart comm mode: trigger transaction on data from NCS and 'altered' events from Device
+
+# TODO: Manual mode binding
+
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
 # CONSIDER: disable animation
@@ -32,7 +44,7 @@ from entry import Entry
 
 log = Logger("UI")
 
-ICON = resource_filename(__name__, 'res/icon.png')
+ICON = resource_filename(__name__, 'res/icon_r.png')
 
 
 class ControlPanel(QStackedWidget):
@@ -48,14 +60,16 @@ class ControlPanel(QStackedWidget):
         self.setMaximumHeight(self.panels[name].sizeHint().height())
         # return self.setCurrentIndex(0)
 
-    def newPanel(self, entries: Iterable):
+    def newPanel(self, params: Iterable):
         container = QWidget(self)
+        container.entries = {}
         layout = QVBoxLayout()
-        spacing = self.parent().spacing
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        for par in entries:
-            layout.addWidget(Entry(par, container))
+        for par in params:
+            entry = Entry(par, container)
+            container.entries[par.name.lower()] = entry
+            layout.addWidget(entry)
         container.setLayout(layout)
         self.addWidget(container)
         return container
@@ -84,6 +98,7 @@ class UI(QApplication):
         self.commPanel = SerialCommPanel(self.root, app.devInt)
         self.deviceCombobox = self.newDeviceCombobox(self.root)
         self.controlPanel = ControlPanel(self.root)
+        self.ncsPortHint = self.newPortHintLabel(self.root)
 
         for i in range(1, 5):
             setattr(self, f'testButton{i}', self.newTestButton(self.root, i))
@@ -120,10 +135,11 @@ class UI(QApplication):
 
         # Communication bindings
         self.commPanel.bind(SerialCommPanel.Mode.Continuous, self.triggerContComm)
-        self.commPanel.bind(SerialCommPanel.Mode.Manual, self.testSendPacketMock)  # TODO: manual mode binding
+        self.commPanel.bind(SerialCommPanel.Mode.Manual, self.testSendPacketMock)
 
         # Update commPanel interface
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
+        self.protocolChanged.connect(partial(self.ncsPortHint.setVisible, True))
 
         # Indicate communication failure
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
@@ -155,6 +171,7 @@ class UI(QApplication):
                 tools.addSpacing(spacing)
                 tools.addWidget(self.commPanel)
             with Block(main, layout='v', spacing=spacing, attr='entriesLayout') as controls:
+                controls.addWidget(self.ncsPortHint)
                 controls.addWidget(self.controlPanel)
                 controls.addStretch()
             with Block(main, layout='h', spacing=spacing, attr='testLayout') as test:
@@ -190,6 +207,11 @@ class UI(QApplication):
         this.lineEdit().textEdited.connect(lambda text: this.setText(text.upper()))
 
         this.setToolTip("Device")
+        return this
+
+    def newPortHintLabel(self, parent):
+        this = QLabel(f"Connect native control soft to <b>{CONFIG.NATIVE_COM_PORT}</b>", parent)
+        this.setVisible(False)
         return this
 
     def newTestButton(self, parent, n:int):
@@ -233,7 +255,7 @@ class UI(QApplication):
         self.commPanel.comCombobox.currentIndexChanged.connect(lambda idx: print(f'Changed {idx}'))
 
     def testSlot2(self):
-        self.app.addHandler('updated', self.commPanel.testSlotL)
+        print(self.controlPanel.panels['sony'].layout().itemAt(0).widget().input.colorer.blinking)
 
     def testSlot3(self):
         self.focusChanged.connect(lambda *args: print(f"Focus changed: {args}"))
