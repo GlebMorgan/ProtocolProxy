@@ -83,7 +83,6 @@ class ProtocolLoader(dict):
 class CONFIG(ConfigLoader, section='APP'):
     DEVICES_FOLDER_REL: str = 'devices'
     APP_COM_PORT: str = 'COM11'     # virtual port for App
-    NATIVE_COM_PORT: str = 'COM10'  # virtual port for NCS
     DEV_COM_PORT: str = 'COM1'      # real port for Device
     DEVICE_TIMEOUT: float = 0.5  # sec
     SMALL_TIMEOUT_DELAY: float = 0.5  # sec

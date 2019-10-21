@@ -1,17 +1,16 @@
 from functools import partial
 from typing import Tuple, Iterable
 
-from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex, QTimer
+from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex
 from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
-from PyQt5Utils import Block, blockedSignals, setFocusChain
-from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, Colorer, DisplayColor
-from PyQt5Utils.extended_widgets import QFixLabel
-from Utils import Logger, formatDict
+from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor
+from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixLabel
+from Utils import Logger, formatDict, virtualport
 from pkg_resources import resource_filename
 
-from app import ApplicationError, CONFIG
+from app import ApplicationError
 from device import Device
 from entry import Entry
 
@@ -140,6 +139,7 @@ class UI(QApplication):
         # Update commPanel interface
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
         self.protocolChanged.connect(partial(self.ncsPortHint.setVisible, True))
+        self.protocolChanged.connect(self.ncsPortHint.updateLabel)
 
         # Indicate communication failure
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
@@ -210,7 +210,18 @@ class UI(QApplication):
         return this
 
     def newPortHintLabel(self, parent):
-        this = QLabel(f"Connect native control soft to <b>{CONFIG.NATIVE_COM_PORT}</b>", parent)
+        def updateLabel(this):
+            assert self.app.appInt is not None
+            nativeComPort = virtualport.find_complement(self.app.appInt.port)
+            if nativeComPort is None:
+                text = f'<font color="red">App interface com port <b>{self.app.appInt.port}</b> ' \
+                       'is not part of virtual com port pair</font>'
+            else:
+                text = f"Connect native control soft to <b>{nativeComPort}</b>"
+            this.setText(text)
+
+        this = QLabel("", parent)
+        this.updateLabel = updateLabel.__get__(this, this.__class__)  # bind method
         this.setVisible(False)
         return this
 
