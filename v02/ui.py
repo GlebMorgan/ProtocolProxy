@@ -6,7 +6,7 @@ from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
 from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor
-from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixLabel
+from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel
 from Utils import Logger, formatDict, virtualport
 from pkg_resources import resource_filename
 
@@ -165,7 +165,7 @@ class UI(QApplication):
         spacing = self.root.spacing
         with Block(parent, layout='v', spacing=spacing, margins=spacing, attr='mainLayout') as main:
             with Block(main, layout='h', spacing=0, attr='toolLayout') as tools:
-                tools.addWidget(QFixLabel("Device", self.root))
+                tools.addWidget(QFixedLabel("Device", self.root))
                 tools.addWidget(self.deviceCombobox)
                 tools.addStretch(3)
                 tools.addSpacing(spacing)
