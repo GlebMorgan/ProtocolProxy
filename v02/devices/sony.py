@@ -33,8 +33,8 @@ class SONY(Device):
     CNT_OUT = Prop('Outgoing msgs counter', 'out', int)
 
     def wrap(self, data: bytes) -> bytes:
-        if data != self.IDLE_PAYLOAD: self.CNT_IN += 1
         with self.lock:
+            if data != self.IDLE_PAYLOAD: self.CNT_IN += 1
             header = bitsarray(self.POWER, self.RESET, self.VIDEO_IN_EN, self.VIDEO_OUT_EN), self.CNT_IN % 0x100
             return struct.pack('< B B', *header) + data
 
@@ -42,12 +42,13 @@ class SONY(Device):
         self.validateReply(packet)
         cls = self.__class__
         POWER_STATE, RESET_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE = flags(packet[0], 4)
-        # ▼ Access parameters via class to get a descriptor, not parameter value
-        cls.POWER.ack(POWER_STATE)
-        cls.RESET.ack(RESET_STATE)
-        cls.VIDEO_IN_EN.ack(VIDEO_IN_STATE)
-        cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
-        self.CNT_OUT = packet[1]
+        with self.lock:
+            # ▼ Access parameters via class to get a descriptor, not parameter value
+            cls.POWER.ack(POWER_STATE)
+            cls.RESET.ack(RESET_STATE)
+            cls.VIDEO_IN_EN.ack(VIDEO_IN_STATE)
+            cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
+            self.CNT_OUT = packet[1]
         return packet[2:]
 
     def sendNative(self, com, data: bytes) -> int:
@@ -69,7 +70,7 @@ class SONY(Device):
         while byte == b'\xFF':
             byte = com.read()  # skip all leading 'FF's
         yield byte
-        for _ in range(15):  # 1 byte has been already read a line above
+        for _ in range(15):  # first byte has been already read a line above
             byte = com.read()
             yield byte
             if byte == b'\xFF': return

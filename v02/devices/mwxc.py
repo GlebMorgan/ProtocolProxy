@@ -39,12 +39,13 @@ class MWXC(Device):
     def unwrap(self, packet: bytes) -> bytes:
         self.validateReply(packet)
         cls = self.__class__
-        POWER_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE, CTRL_CHNL_STATE = flags(packet[0], 4)
-        # ▼ access parameters via class to get a descriptor, not parameter value
-        cls.POWER.ack(POWER_STATE)
-        cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
-        self.VIDEO_IN_STATE = VIDEO_IN_STATE
-        self.CTRL_CHNL_STATE = CTRL_CHNL_STATE
+        with self.lock:
+            POWER_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE, CTRL_CHNL_STATE = flags(packet[0], 4)
+            # ▼ Access parameters via class to get a descriptor, not parameter value
+            cls.POWER.ack(POWER_STATE)
+            cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
+            self.VIDEO_IN_STATE = VIDEO_IN_STATE
+            self.CTRL_CHNL_STATE = CTRL_CHNL_STATE
         return packet[1:]
 
     def sendNative(self, com, data: bytes) -> int:
@@ -72,7 +73,8 @@ class MWXC(Device):
             raise BadCrcError(f"Bad packet checksum (expected '{bytewise(rfc1071(nativePacket[:-2]))}', "
                               f"got '{bytewise(nativePacket[-2:])}'). Packet discarded",
                               dataname="Packet", data=nativePacket)
-        self.IDLE_PAYLOAD = nativePacket[1:-2]
+        with self.lock:
+            self.IDLE_PAYLOAD = nativePacket[1:-2]
         return self.IDLE_PAYLOAD
 
     def validateReply(self, reply: bytes):
