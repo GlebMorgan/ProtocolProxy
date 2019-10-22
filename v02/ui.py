@@ -10,7 +10,7 @@ from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit,
 from Utils import Logger, formatDict, virtualport
 from pkg_resources import resource_filename
 
-from app import ApplicationError
+from app import App, ApplicationError
 from device import Device
 from entry import Entry
 
@@ -26,13 +26,15 @@ from entry import Entry
 
 # ✓ Fix window icon
 
-# TODO: Communicate with NCS checkbox
+# ✗ Communicate with NCS checkbox
 
 # ✓ Some where-to-connect NCS UI hint
 
-# TODO: Smart comm mode: trigger transaction on data from NCS and 'altered' events from Device
+# ✓ Smart comm mode: trigger transaction on data from NCS and 'altered' events from Device
 
-# TODO: Manual mode binding
+# ✓ Manual mode binding
+
+# TODO: logging on a separate UI panel
 
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
@@ -88,7 +90,7 @@ class UI(QApplication):
         super().__init__(argv)
 
         self.title = f"{app.PROJECT_NAME} v{app.VERSION} © 2019 GlebMorgan"
-        self.app = app
+        self.app: App = app
 
         self.window = self.setUiWindow()
         self.root = QWidget(self.window)
@@ -134,12 +136,16 @@ class UI(QApplication):
 
         # Communication bindings
         self.commPanel.bind(SerialCommPanel.Mode.Continuous, self.triggerContComm)
-        self.commPanel.bind(SerialCommPanel.Mode.Manual, self.testSendPacketMock)
+        self.commPanel.bind(SerialCommPanel.Mode.Manual, self.app.transaction)
+        self.commPanel.bind(SerialCommPanel.Mode.Smart, self.app.transaction)
 
         # Update commPanel interface
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
         self.protocolChanged.connect(partial(self.ncsPortHint.setVisible, True))
         self.protocolChanged.connect(self.ncsPortHint.updateLabel)
+
+        # Smart mode NCS packet monitoring
+        self.commPanel.commModeChanged.connect(self.triggerSmartMode)
 
         # Indicate communication failure
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
@@ -155,7 +161,6 @@ class UI(QApplication):
 
     def setUiWindow(self):
         this = QMainWindow()
-        # self.centerWindowOnScreen(this)
         this.move(1200, 200)  # TEMP
         this.setWindowTitle(self.title)
         this.setWindowIcon(QIcon(ICON))
@@ -255,15 +260,23 @@ class UI(QApplication):
 
     def triggerContComm(self, state):
         if state is False:
-            status = self.app.start()
+            status = self.app.startComm()
         else:
-            status = self.app.stop()
-        self.deviceCombobox.setDisabled(status)
+            status = self.app.stopComm()
+        if status is not None:
+            self.deviceCombobox.setDisabled(status)
         return status
+
+    def triggerSmartMode(self, mode):
+        if mode == SerialCommPanel.Mode.Smart:
+            self.app.enableSmart()
+            self.app.addHandler('altered', self.app.ackTransaction)
+        else:
+            self.app.disableSmart()
+            self.app.events['altered'].remove(self.app.ackTransaction)
 
     def testSlot1(self):
         print(formatDict(self.app.events))
-        self.commPanel.comCombobox.currentIndexChanged.connect(lambda idx: print(f'Changed {idx}'))
 
     def testSlot2(self):
         print(self.controlPanel.panels['sony'].layout().itemAt(0).widget().input.colorer.blinking)
