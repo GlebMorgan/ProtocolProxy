@@ -1,20 +1,22 @@
 import importlib
-import threading
-import readline
+from threading import Thread, Event
 from contextlib import contextmanager
-from itertools import chain
 from os import listdir, linesep
 from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
 from sys import exit as sys_exit, path as sys_path
-from typing import Union, Dict, Type
+from typing import Union, Dict, Type, Callable
 
-from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict
+from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, capital
 
 from device import Device, DataInvalidError
 from notifier import Notifier
 from Transceiver import SerialTransceiver, PelengTransceiver
 from Transceiver.errors import VerboseError
 from Transceiver.errors import *
+
+# NCS - Native Control Software - external native application that is used
+#       to control the device through ProtocolProxy app
+
 
 log = Logger("App")
 tlog = Logger("Transactions")
@@ -92,7 +94,6 @@ class CONFIG(ConfigLoader, section='APP'):
 
 
 class App(Notifier):
-    protocols: Dict[str, Type[Device]] = None
     """
     API methods:
       • init()
@@ -105,6 +106,9 @@ class App(Notifier):
       • device
       • CONFIG
     """
+
+    protocols: Dict[str, Type[Device]] = None
+
     def __init__(self, INFO: dict):
         super().__init__()
         CONFIG.load()
@@ -115,9 +119,11 @@ class App(Notifier):
 
         self.protocols: ProtocolLoader = ProtocolLoader()
 
-        self.cmdThread: threading.Thread = None
-        self.commThread: threading.Thread = None
-        self.stopCommEvent: threading.Event = None
+        self.cmdThread: Thread = None
+        self.commThread: Thread = None
+        self.ncsThread: Thread = None
+
+        self.stopEvent: Event = None
         self.commRunning: bool = False
 
         self.loggerLevels = {
@@ -144,8 +150,12 @@ class App(Notifier):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.commThread:
             if self.commRunning:
-                self.stopCommEvent.set()
+                self.stopEvent.set()
             self.commThread.join()
+
+        if self.ncsThread:
+            self.stopEvent.set()
+            self.ncsThread.join()
 
         if self.cmdThread:
             self.cmdThread.join()
@@ -173,7 +183,7 @@ class App(Notifier):
         self.notify('app initialized')
 
     def startCmdThread(self):
-        self.cmdThread = threading.Thread(name="CMD thread", target=self.runCmd)
+        self.cmdThread = Thread(name="CMD thread", target=self.runCmd)
         self.cmdThread.start()
 
     @contextmanager
@@ -181,9 +191,9 @@ class App(Notifier):
         if not self.commRunning:
             yield
         else:
-            self.stop()
+            self.stopComm()
             yield
-            self.start()
+            self.startComm()
 
     @staticmethod
     def getInterface(intType: str):
@@ -208,50 +218,86 @@ class App(Notifier):
             self.device.configureInterface(self.appInt, self.devInt)
         self.notify('protocol changed', deviceName)
 
-    def start(self):
-        """ Open both ports and run communication loop in a separate thread
-            Returns: True ––► comm launched, False ––► comm is not running, None –-► already running
+    def start(self, name: str, target: Callable, subject: str, openApp: bool, openDev: bool):
+        """ Open requested ports and run subject (communication,
+                NCS monitoring, etc.) loop in a separate thread
+            Returns:
+                True  ––► subject loop launched,
+                False ––► subject loop is not running,
+                None  –-► already running
         """
-        if self.commThread is not None:
-            log.warning("Communication is already launched — ignoring command")
+        thread = getattr(self, name)
+        if thread is not None:
+            log.warning(f"{subject.capitalize()} is already enabled — ignoring command")
             return None
         if not self.devInt:
             raise ApplicationError("Target device is not set")
 
-        log.info("Launching communication...")
+        log.info(f"Launching {subject}...")
         try:
-            self.appInt.open()
-            self.devInt.open()
+            if openApp is True: self.appInt.open()
+            if openDev is True: self.devInt.open()
         except SerialError as e:
-            self.appInt.close()
-            self.devInt.close()
-            self.notify('comm dropped')
-            log.fatal(f"Failed to start communication: {e}")
+            if openApp is True:
+                self.appInt.close()
+            if openDev is True:
+                self.devInt.close()
+                self.notify('comm dropped')
+            log.fatal(f"Failed to start {subject} loop: {e}")
             log.showStackTrace(e, level='debug')
             return False
 
-        self.stopCommEvent = threading.Event()
-        self.commThread = threading.Thread(name="Communication thread",
-                                           target=self.commLoop, args=(self.stopCommEvent,))
-        log.info(f"Starting transactions between {self.device.name} via '{self.devInt.token}' "
-                 f"and native control software via '{self.appInt.token}'...")
-        self.commThread.start()
+        self.stopEvent = Event()
+        thread = Thread(name="Communication thread",
+                        target=target, args=(self.stopEvent,))
+        thread.start()
+        setattr(self, name, thread)
         return True
 
-    def stop(self):
-        """ Stop communication loop and block until it exits
-            Returns: False ––► comm stopped, None –-► has been stopped already
+    def stop(self, name: str, subject: str):
+        """ Stop subject (communication, NCS monitoring, etc.) loop
+                and block until it exits
+            Returns:
+                False ––► subject stopped,
+                None  –-► has been stopped already
         """
-        if not self.commThread:
-            log.warning("Communication is already stopped — ignoring command")
+        thread = getattr(self, name)
+        if not thread:
+            log.warning(f"{subject.capitalize()} is already disabled — ignoring command")
             return None
-        if self.commThread.is_alive():
-            log.info("Interrupting communication...")
-            self.stopCommEvent.set()
-        self.commThread.join()
-        self.stopCommEvent.clear()
-        self.commThread = None
+        if thread.is_alive():
+            log.info(f"Interrupting {subject} loop...")
+            self.stopEvent.set()
+        thread.join()
+        self.stopEvent.clear()
+        setattr(self, name, thread)
         return False
+
+    def startComm(self):
+        status = self.start(name='commThread', target=self.commLoop,
+                            subject='communication', openApp=True, openDev=True)
+        if status is True:
+            log.info(f"Starting transactions between {self.device.name} via '{self.devInt.token}' "
+                     f"and native control software via '{self.appInt.token}'...")
+        return status
+
+    def stopComm(self):
+        status = self.stop(name='commThread', subject='communication')
+        self.commThread = None
+        return status
+
+    def enableSmart(self):
+        status = self.start(name='ncsThread', target=self.ncsLoop,
+                            subject='smart mode', openApp=True, openDev=False)
+        if status is True:
+            log.info(f"Starting to monitor {self.device.name} NCS via '{self.appInt.token}'")
+
+        return status
+
+    def disableSmart(self):
+        status = self.stop(name='ncsThread', subject='smart mode')
+        self.ncsThread = None
+        return status
 
     @contextmanager
     def controlSoftErrorsHandler(self):
@@ -334,69 +380,158 @@ class App(Notifier):
                 self.devInt.reset_input_buffer()
                 tlog.info(f"{self.devInt.token}: {self.devInt.in_waiting} bytes flushed.")
 
-    def commLoop(self, stopEvent):
-        with self.appInt, self.devInt:
-            self.notify('comm started')
+    def commLoop(self, stopEvent: Event):
+        self.notify('comm started')
+        try:
+            self.commRunning = True
+            self.nativeSoftConnEstablished = False
+            log.info("Communication launched")
+            while True:  # TODO: replace this loop with proper timing-based scheduler
+                self.nativeData = self.deviceData = None
+                if (stopEvent.is_set()):
+                    log.info("Received stop communication command")
+                    break
+
+                with self.controlSoftErrorsHandler():
+                    if self.interactWithNativeSoft:
+                        self.nativeData = self.device.receiveNative(self.appInt)
+                    else:
+                        self.nativeData = self.device.IDLE_PAYLOAD
+                if self.nativeData is None: continue
+
+                self.nativeData = self.device.wrap(self.nativeData)
+                try:
+                    self.devInt.sendPacket(self.nativeData)
+                except SerialWriteTimeoutError:
+                    tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
+                    self.notify('comm error')
+                    continue  # TODO: what needs to be done when unexpected error happens [2]?
+
+                with self.deviceErrorsHandler(stopEvent):
+                    self.deviceData = self.devInt.receivePacket()
+                if self.deviceData is None: continue
+
+                self.deviceData = self.device.unwrap(self.deviceData)
+                try:
+                    if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
+                        self.device.sendNative(self.appInt, self.deviceData)
+                except SerialWriteTimeoutError:
+                    if self.nativeSoftConnEstablished is False:
+                        # ▼ Wait for native control soft to launch
+                        if self.appInt.nTimeouts == 1:
+                            tlog.info(f"Waiting for {self.device.name} native control soft to launch")
+                    else:
+                        tlog.error(f"Failed to send data over {self.appInt.token} "
+                                   f"(native communication soft disconnected?)")
+                        self.notify('comm error')
+                        # TODO: what needs to be done when unexpected error happens [3]?
+                self.notify('comm ok')
+
+        except SerialError as e:
+            tlog.fatal(f"Transaction failed: {e}")
+            tlog.showStackTrace(e, level='debug')
+            self.notify('comm failed')
+            # TODO: what needs to be done when unexpected error happens [1]?
+        except Exception as e:
+            tlog.fatal(f"Unexpected error happened: {e}")
+            tlog.showStackTrace(e, level='error')
+            self.notify('comm failed')
+        finally:
+            self.appInt.close()
+            self.devInt.close()
+            self.appInt.nTimeouts = self.devInt.nTimeouts = 0
+            self.commRunning = False
+            self.notify('comm stopped')
+            log.info("Communication stopped")
+
+    def ncsLoop(self, stopEvent: Event):
+        self.notify('comm started')
+        try:
+            log.debug('NCS loop launched')
+            while True:
+                if (stopEvent.is_set()):
+                    log.info("Received stop communication command")
+                    break
+                try:
+                    self.nativeData = self.device.receiveNative(self.appInt)
+                except SerialReadTimeoutError:
+                    log.debug("NCS timeout")
+                    continue
+                except (DataInvalidError, SerialCommunicationError) as e:
+                    log.debug(f"Bad packet from NCS - {e}")
+                    self.notify('comm error')
+                    continue
+                else:
+                    state = self.transaction(data=self.nativeData, closePort=False)
+                if state is True:
+                    try:
+                        self.device.sendNative(self.appInt, self.deviceData)
+                    except SerialWriteTimeoutError:
+                        log.error("NCS write timeout")
+                        self.notify('comm error')
+                if self.appInt.in_waiting == 0:
+                    self.devInt.close()
+                else:
+                    self.appInt.reset_input_buffer()
+        except SerialError as e:
+            tlog.fatal(f"Transaction failed: {e}")
+            tlog.showStackTrace(e, level='debug')
+            self.notify('comm failed')
+        except Exception as e:
+            tlog.fatal(f"Unexpected error happened: {e}")
+            tlog.showStackTrace(e, level='error')
+            self.notify('comm failed')
+        finally:
+            self.appInt.close()
+            self.devInt.close()
+            self.notify('comm stopped')
+            log.info("NCS loop stopped")
+
+    def transaction(self, *_, data=None, closePort=True):
+        with self.device.lock:
+            if data is None: data = self.device.IDLE_PAYLOAD
+            data = self.device.wrap(data)
+            port = self.devInt.port
+
+            if self.devInt.is_open is False:
+                try:
+                    self.devInt.open()
+                except SerialError as e:
+                    log.error(f"Transaction failed - cannot open port '{port}' - {e}")
+                    log.showStackTrace(e, level='debug')
+                    return False
             try:
-                self.commRunning = True
-                self.nativeSoftConnEstablished = False
-                log.info("Communication launched")
-                while True:  # TODO: replace this loop with proper timing-based scheduler
-                    self.nativeData = self.deviceData = None
-                    if (stopEvent.is_set()):
-                        log.info("Received stop communication command.")
-                        break
-                    with self.device.lock:
-
-                        with self.controlSoftErrorsHandler():
-                            if self.interactWithNativeSoft:
-                                self.nativeData = self.device.receiveNative(self.appInt)
-                            else:
-                                self.nativeData = self.device.IDLE_PAYLOAD
-                        if self.nativeData is None: continue
-
-                        self.nativeData = self.device.wrap(self.nativeData)
-                        try:
-                            self.devInt.sendPacket(self.nativeData)
-                        except SerialWriteTimeoutError:
-                            tlog.error(f"Failed to send data over '{self.devInt.token}' (device disconnected?)")
-                            self.notify('comm error')
-                            continue  # TODO: what needs to be done when unexpected error happens [2]?
-
-                        with self.deviceErrorsHandler(stopEvent):
-                            self.deviceData = self.devInt.receivePacket()
-                        if self.deviceData is None: continue
-
-                        self.deviceData = self.device.unwrap(self.deviceData)
-                        try:
-                            if self.interactWithNativeSoft and self.appInt.nTimeouts == 0:  # duck-tape-ish...
-                                self.device.sendNative(self.appInt, self.deviceData)
-                        except SerialWriteTimeoutError:
-                            if self.nativeSoftConnEstablished is False:
-                                # ▼ Wait for native control soft to launch
-                                if self.appInt.nTimeouts == 1:
-                                    tlog.info(f"Waiting for {self.device.name} native control soft to launch")
-                            else:
-                                tlog.error(f"Failed to send data over {self.appInt.token} "
-                                           f"(native communication soft disconnected?)")
-                                self.notify('comm error')
-                                # TODO: what needs to be done when unexpected error happens [3]?
-                        self.notify('comm ok')
-
-            except SerialError as e:
-                tlog.fatal(f"Transaction failed: {e}")
-                tlog.showStackTrace(e, level='debug')
-                self.notify('comm failed')
-                # TODO: what needs to be done when unexpected error happens [1]?
-            except Exception as e:
-                tlog.fatal(f"Unexpected error happend: {e}")
-                tlog.showStackTrace(e, level='error')
-                self.notify('comm failed')
+                self.devInt.sendPacket(data)
+            except SerialWriteTimeoutError:
+                tlog.error(f"Device write timeout ({port})")
+                self.notify('comm error')
+                return False
+            try:
+                self.deviceData = self.device.unwrap(self.devInt.receivePacket())
+            except SerialReadTimeoutError:
+                log.warning("Device timeout")
+                self.notify('comm timeout')
+            except (DataInvalidError, SerialCommunicationError) as e:
+                log.error(f"Transaction failed - {e}")
+                log.showStackTrace(e, level='debug')
+            else:
+                self.notify('comm ok')
+                return True
             finally:
-                self.appInt.nTimeouts = self.devInt.nTimeouts = 0
-                self.commRunning = False
-                self.notify('comm stopped')
-                log.info("Communication stopped")
+                if closePort: self.devInt.close()
+
+    def ackTransaction(self, *_, limit=1000):
+        try:
+            for _ in range(limit):
+                self.transaction(closePort=False)
+                if self.deviceData is None: return None
+                if all(par.inSync for par in self.device.params): break
+            else:
+                failedParams = (par.name for par in self.device.params if not par.inSync)
+                log.error(f"Failed to get ack for {self.device.name} params {', '.join(failedParams)} " 
+                          f"after {limit} attempts")
+        finally:
+            self.devInt.close()
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
         isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
@@ -586,18 +721,18 @@ class App(Notifier):
 
                 elif command == 's':
                     if self.commRunning:
-                        self.stop()
+                        self.stopComm()
                         if self.suppressLoggers():
                             cmd.info(self.suppressLoggers(False))
                     else:
-                        self.start()
+                        self.startComm()
 
                 elif command == 'r':
                     if self.commRunning:
-                        self.stop()
+                        self.stopComm()
                         if self.suppressLoggers():
                             cmd.info(self.suppressLoggers(False))
-                        self.start()
+                        self.startComm()
                     else: cmd.info("Cannot restart communication — not running currently")
 
                 elif command in ('n', 'native'):
