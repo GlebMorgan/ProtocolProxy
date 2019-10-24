@@ -166,7 +166,7 @@ class App(Notifier):
     def init(self):
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
         log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
-        for name, level in self.loggerLevels.items(): Logger.LOGGERS[name].setLevel(level)
+        for name, level in self.loggerLevels.items(): Logger.all[name].setLevel(level)
         self.addEvents(
             'app initialized',   # All required startup initialization finished, API methods could be used
             'protocol changed',  # App reconfigured for new protocol
@@ -244,7 +244,7 @@ class App(Notifier):
                 self.devInt.close()
                 self.notify('comm dropped')
             log.fatal(f"Failed to start {subject} loop: {e}")
-            log.showStackTrace(e, level='debug')
+            log.debug(e, traceback=True)
             return False
 
         self.stopEvent = Event()
@@ -323,7 +323,7 @@ class App(Notifier):
                 tlog.error(e)
             tlog.info("Packet discarded")
             if isinstance(e, VerboseError):
-                tlog.showError(e, level='debug')
+                tlog.error(e, level='debug')
             self.notify('comm error')
         else:
             if self.appInt.nTimeouts:
@@ -367,7 +367,7 @@ class App(Notifier):
                 tlog.error(e)
             tlog.info("Packet discarded")
             if isinstance(e, VerboseError):
-                tlog.showError(e, level='debug')
+                tlog.error(e, level='debug')
             self.notify('comm error')
         else:
             if self.devInt.nTimeouts:
@@ -429,12 +429,12 @@ class App(Notifier):
 
         except SerialError as e:
             tlog.fatal(f"Transaction failed: {e}")
-            tlog.showStackTrace(e, level='debug')
+            tlog.debug(e, traceback=True)
             self.notify('comm failed')
             # TODO: what needs to be done when unexpected error happens [1]?
         except Exception as e:
             tlog.fatal(f"Unexpected error happened: {e}")
-            tlog.showStackTrace(e, level='error')
+            tlog.error(e, traceback=True)
             self.notify('comm failed')
         finally:
             self.appInt.close()
@@ -475,11 +475,11 @@ class App(Notifier):
                     self.appInt.reset_input_buffer()
         except SerialError as e:
             tlog.fatal(f"Transaction failed: {e}")
-            tlog.showStackTrace(e, level='debug')
+            tlog.debug(e, traceback=True)
             self.notify('comm failed')
         except Exception as e:
             tlog.fatal(f"Unexpected error happened: {e}")
-            tlog.showStackTrace(e, level='error')
+            tlog.error(e, traceback=True)
             self.notify('comm failed')
         finally:
             self.appInt.close()
@@ -498,7 +498,7 @@ class App(Notifier):
                     self.devInt.open()
                 except SerialError as e:
                     log.error(f"Transaction failed - cannot open port '{port}' - {e}")
-                    log.showStackTrace(e, level='debug')
+                    log.debug(e, traceback=True)
                     return False
             try:
                 self.devInt.sendPacket(data)
@@ -513,7 +513,7 @@ class App(Notifier):
                 self.notify('comm timeout')
             except (DataInvalidError, SerialCommunicationError) as e:
                 log.error(f"Transaction failed - {e}")
-                log.showStackTrace(e, level='debug')
+                log.debug(e, traceback=True)
             else:
                 self.notify('comm ok')
                 return True
@@ -534,28 +534,28 @@ class App(Notifier):
             self.devInt.close()
 
     def suppressLoggers(self, mode: Union[str, bool] = None) -> Union[str, bool]:
-        isAltered = not all((Logger.LOGGERS[loggerName].levelName == level
+        isAltered = not all((Logger.all[loggerName].levelname == level
                              for loggerName, level in self.loggerLevels.items()))
         if mode is None:
             # ▼ return whether loggers was suppressed (True) or they are as defined in self.loggerLevels (False)
             return isAltered
         if mode == 'kill':  # disable all loggers completely
             for loggerName in self.loggerLevels:
-                Logger.LOGGERS[loggerName].disabled = True
+                Logger.all[loggerName].disabled = True
             return "————— Transactions logging output disabled —————".center(80)
         elif isAltered:  # enable all loggers back
             for loggerName in self.loggerLevels:
-                Logger.LOGGERS[loggerName].disabled = False
+                Logger.all[loggerName].disabled = False
 
         if mode is False or mode == 'False':  # assign levels according to self.loggerLevels
-            for loggerName, level in self.loggerLevels.items(): Logger.LOGGERS[loggerName].setLevel(level)
+            for loggerName, level in self.loggerLevels.items(): Logger.all[loggerName].setLevel(level)
             return "————— Transactions logging output restored —————".center(80)
         elif mode is True or mode == 'True':  # set transactions-related loggers to lower level
-            for loggerName in self.loggerLevels: Logger.LOGGERS[loggerName].setLevel('ERROR')
-            Logger.LOGGERS["Transactions"].setLevel('WARNING')
+            for loggerName in self.loggerLevels: Logger.all[loggerName].setLevel('ERROR')
+            Logger.all["Transactions"].setLevel('WARNING')
             return "————— Transactions logging output suppressed —————".center(80)
-        elif mode in Logger.LEVELS:  # set all loggers to given level
-            for loggerName in self.loggerLevels: Logger.LOGGERS[loggerName].setLevel(mode)
+        elif mode in log.levels:  # set all loggers to given level
+            for loggerName in self.loggerLevels: Logger.all[loggerName].setLevel(mode)
             return f"————— Transactions logging output set to '{mode}' level —————".center(80)
         else:
             raise ValueError(f"Invalid logging mode '{mode}'")
@@ -563,10 +563,12 @@ class App(Notifier):
     @staticmethod
     def setTransactionOutputLevel(level: Union[str, int]):
         tlog.setLevel(level)
-        Logger.LOGGERS['Packets'].setLevel(level)
+        Logger.all['Packets'].setLevel(level)
 
     def runCmd(self):
-        cmd = Logger("AppCMD", mode='noFormatting')
+        # ▼ TODO: provide custom formatter choice here
+        cmd = Logger()
+        cmd.setLevel('DEBUG')
 
         commandsHelp = {
             'h': ("h [command]", "show help"),
@@ -701,15 +703,13 @@ class App(Notifier):
                         cmd.info(', '.join(f"{logName} = {level}" for logName, level in self.loggerLevels.items()))
                     elif len(params) == 3:
                         loggerName = params[1].capitalize()
-                        if (loggerName not in self.loggerLevels):
-                            raise CommandError("Invalid logger name. List available loggers via 'sh log'")
+                        if loggerName not in self.loggerLevels:
+                            raise CommandError("Invalid logger name. List available loggers via 'show log'")
                         newLevelName = params[2].upper()
-                        if (newLevelName in Logger.LEVELS_SHORT):
-                            newLevelName = Logger.LEVELS_SHORT[newLevelName]
-                        elif (newLevelName not in Logger.LEVELS):
+                        if newLevelName not in log.levels:
                             raise CommandError('Invalid logging level')
                         self.loggerLevels[loggerName] = newLevelName
-                        Logger.LOGGERS[loggerName].setLevel(newLevelName)
+                        Logger.all[loggerName].setLevel(newLevelName)
                     else: raise CommandError(f"Wrong parameters")
 
                 elif command == '>':
@@ -721,17 +721,17 @@ class App(Notifier):
 
                 elif command == 's':
                     if self.commRunning:
-                        self.stopComm()
                         if self.suppressLoggers():
                             cmd.info(self.suppressLoggers(False))
+                        self.stopComm()
                     else:
                         self.startComm()
 
                 elif command == 'r':
                     if self.commRunning:
-                        self.stopComm()
                         if self.suppressLoggers():
                             cmd.info(self.suppressLoggers(False))
+                        self.stopComm()
                         self.startComm()
                     else: cmd.info("Cannot restart communication — not running currently")
 
@@ -804,11 +804,11 @@ class App(Notifier):
 
                 else: raise CommandError(f"Wrong command '{command}'")
 
-            except CommandError as e: cmd.showError(e)
-            except ApplicationError as e: cmd.showError(e)
-            except NotImplementedError as e: cmd.showError(e)
-            except SerialCommunicationError as e: cmd.showError(e)
-            except Exception as e: cmd.showStackTrace(e)
+            except CommandError as e: cmd.error(e)
+            except ApplicationError as e: cmd.error(e)
+            except NotImplementedError as e: cmd.error(e)
+            except SerialCommunicationError as e: cmd.error(e)
+            except Exception as e: cmd.error(e, traceback=True)
 
 
 if __name__ == '__main__':
@@ -816,8 +816,8 @@ if __name__ == '__main__':
 
     log.debug(f"Launched from: {abspath(__file__)}")
 
-    Logger.LOGGERS["Device"].setLevel("INFO")
-    Logger.LOGGERS["Config"].setLevel("DEBUG")
+    Logger.all["Device"].setLevel("INFO")
+    Logger.all["Config"].setLevel("DEBUG")
     ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
     ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
 
