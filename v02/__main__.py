@@ -1,14 +1,14 @@
-import ctypes
+import sys
 from os.path import abspath, dirname
 from os.path import join as joinpath, expandvars as envar
-from pathlib import Path
-import sys
 
 from PyQt5Utils import install_exhook
 from Utils import ConfigLoader
 
 from app import App, ProtocolLoader
 from ui import UI
+
+# TODO: packaging
 
 __version__ = '2.0.dev1'
 

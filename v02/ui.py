@@ -36,6 +36,8 @@ from entry import Entry
 
 # TODO: logging on a separate UI panel
 
+# TODO: logging.shutdown() at very exit
+
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
 # CONSIDER: disable animation
@@ -232,7 +234,10 @@ class UI(QApplication):
 
     def newTestButton(self, parent, n:int):
         this = QPushButton(f"Test{n}", parent)
-        this.clicked.connect(getattr(self, f'testSlot{n}'))
+        slot = getattr(self, f'testSlot{n}')
+        this.clicked.connect(slot)
+        if hasattr(slot, 'name'):
+            this.setText(slot.name)
         return this
 
     def changeProtocol(self, protocol=None):
@@ -277,16 +282,19 @@ class UI(QApplication):
 
     def testSlot1(self):
         print(formatDict(self.app.events))
+    testSlot1.name = 'Show app events'
 
     def testSlot2(self):
         print(self.controlPanel.panels['sony'].layout().itemAt(0).widget().input.colorer.blinking)
+    testSlot2.name = 'Is par 1 blinking'
 
     def testSlot3(self):
         self.focusChanged.connect(lambda *args: print(f"Focus changed: {args}"))
+    testSlot3.name = 'Log focus changes'
 
     def testSlot4(self):
-        self.commPanel.commButton.colorer.blink(DisplayColor.Red)
-        print(self.commPanel.baudCombobox.lineEdit().setSelection(-1, 0))
+        print(formatDict(log.__class__.manager.loggerDict))
+    testSlot4.name = 'Show loggers'
 
     def testSendPacketMock(self):
         from random import randint
