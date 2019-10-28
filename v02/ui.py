@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVB
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
 from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor
 from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel
-from Utils import Logger, formatDict, virtualport
+from Utils import Logger, formatDict, virtualport, ignoreErrors
 from pkg_resources import resource_filename
 
 from app import App, ApplicationError
@@ -154,6 +154,10 @@ class UI(QApplication):
         # Indicate communication failure
         self.commFailed.connect(partial(self.commPanel.commButton.colorer.setBaseColor, DisplayColor.Red))
 
+        # self.commFailed.connect(lambda: self.commPanel.commButton.colorer.setBaseColor(DisplayColor.Red)
+        # if self.commPanel.commMode is SerialCommPanel.Mode.Continuous
+        # else self.commPanel.commButton.colorer.blink(DisplayColor.Red))
+
         # Indicator blinking
         self.commOk.connect(partial(self.commPanel.indicator.blink, DisplayColor.Green))
         self.commTimeout.connect(partial(self.commPanel.indicator.blink, DisplayColor.Orange))
@@ -280,7 +284,8 @@ class UI(QApplication):
             self.app.addHandler('altered', self.app.ackTransaction)
         else:
             self.app.disableSmart()
-            self.app.events['altered'].remove(self.app.ackTransaction)
+            with ignoreErrors(KeyError):
+                self.app.events['altered'].remove(self.app.ackTransaction)
 
     def testSlot1(self):
         print(formatDict(self.app.events))
