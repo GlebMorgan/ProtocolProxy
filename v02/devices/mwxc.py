@@ -30,7 +30,7 @@ class MWXC(Device):
     VIDEO_OUT_EN = Par('Video transmitter', 'vout', bool)  # ack by VIDEO_OUT_STATE device property
 
     # Device-driven properties
-    VIDEO_IN_STATE = Prop('IR video receiver', 'vin', bool)
+    VIDEO_OUT_STATE = Prop('IR video receiver', 'vin', bool)
     CTRL_CHNL_STATE = Prop('IR control channel', 'c', bool)
 
     def wrap(self, data: bytes) -> bytes:
@@ -44,8 +44,8 @@ class MWXC(Device):
             POWER_STATE, VIDEO_IN_STATE, VIDEO_OUT_STATE, CTRL_CHNL_STATE = flags(packet[0], 4)
             # ▼ Access parameters via class to get a descriptor, not parameter value
             cls.POWER.ack(POWER_STATE)
-            cls.VIDEO_OUT_EN.ack(VIDEO_OUT_STATE)
-            self.VIDEO_IN_STATE = VIDEO_IN_STATE
+            cls.VIDEO_OUT_EN.ack(VIDEO_IN_STATE)
+            self.VIDEO_OUT_STATE = VIDEO_OUT_STATE
             self.CTRL_CHNL_STATE = CTRL_CHNL_STATE
         return packet[1:]
 
