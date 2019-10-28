@@ -7,8 +7,7 @@ from PyQt5.QtGui import QValidator, QFontMetrics, QPalette, QRegExpValidator, QI
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QDesktopWidget, QPushButton, \
     QComboBox, QAction, QLineEdit, QBoxLayout, QLabel, QLayout, QSizePolicy, QMenu, QActionGroup, QGroupBox, \
     QRadioButton, QCheckBox
-from PyQt5Utils import ActionButton, ColoredComboBox, Validator, Colorer, ActionComboBox, ActionLineEdit, \
-    DisplayColor, QRightclickButton, install_exhook
+from PyQt5Utils import DisplayColor, QRightclickButton, install_exhook
 from Utils import Logger, memoLastPosArgs, ConfigLoader, formatDict
 from PyQt5Utils import SerialCommPanel, QIndicator
 
