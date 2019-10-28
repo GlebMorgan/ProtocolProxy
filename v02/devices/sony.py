@@ -6,6 +6,7 @@ from device import Device, Par, Prop, DataInvalidError
 
 
 log = Logger("SONY")
+log.setLevel('DEBUG')
 
 
 class SONY(Device):

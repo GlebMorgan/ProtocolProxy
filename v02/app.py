@@ -19,7 +19,10 @@ from Transceiver.errors import *
 
 
 log = Logger("App")
+log.setLevel('DEBUG')
+
 tlog = Logger("Transactions")
+tlog.setLevel('DEBUG')
 
 
 class ApplicationError(RuntimeError):

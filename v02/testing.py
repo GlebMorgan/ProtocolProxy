@@ -10,6 +10,7 @@ from Utils import Logger, auto_repr, bytewise, formatDict
 sys.path.insert(0, joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices'))
 
 log = Logger("Tests")
+log.setLevel('DEBUG')
 
 
 def testRaiseRuntimeError():
@@ -111,9 +112,9 @@ class Test(unittest.TestCase):
 
             dev.start()
             time.sleep(0.2)
-            Logger.LOGGERS['Serial'].setLevel('DEBUG')
+            Logger.all['Serial'].setLevel('DEBUG')
 
-            print(Logger.LOGGERS['Serial'].levelName)
+            print(Logger.all['Serial'].levelname)
 
             # input('Press smth to start! >>>')
 
@@ -145,7 +146,7 @@ class Test(unittest.TestCase):
             self.assertEqual(bytes.fromhex('01 01 A8 AB AF AA AC AB A3 AA 08'), sendCommand())  # 'chch'
 
         except Exception as e:
-            log.showStackTrace(e)
+            log.error(e, traceback=True)
             raise
         finally:
             stopEvent.set()

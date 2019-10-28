@@ -10,7 +10,9 @@ from Utils import Logger
 from device import Prop, Par
 from notifier import Notifier
 
+
 log = Logger("Entry")
+log.setLevel('DEBUG')
 
 
 class Entry:

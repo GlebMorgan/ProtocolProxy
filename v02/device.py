@@ -6,6 +6,7 @@ from Utils import Logger, auto_repr
 from notifier import Notifier
 
 log = Logger("Device")
+log.setLevel('DEBUG')
 
 
 class DeviceError(RuntimeError):

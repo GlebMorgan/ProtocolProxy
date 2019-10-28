@@ -7,6 +7,7 @@ from device import Device, Par, Prop, DataInvalidError
 
 
 log = Logger("MWXC")
+log.setLevel('DEBUG')
 
 
 class MWXC(Device):

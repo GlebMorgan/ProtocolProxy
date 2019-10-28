@@ -45,7 +45,9 @@ from entry import Entry
 # CONSIDER: ui.py is launched - do not initialize protocol ui panel until user sets protocol explicitly
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
+
 log = Logger("UI")
+log.setLevel('DEBUG')
 
 ICON = resource_filename(__name__, 'res/icon_r.png')
 

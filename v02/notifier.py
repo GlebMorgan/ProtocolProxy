@@ -7,6 +7,7 @@ from orderedset import OrderedSet
 #   (delete events together with object removing since it cannot initiate those events anymore regardless)
 
 log = Logger('Notifier')
+log.setLevel('DEBUG')
 
 # True ––► .notify() and .addHandler() will work only for existing events (no dynamic event creation)
 # False ––► .notify() and .addHandler() executed on non-existent event will create new one on-the-fly
