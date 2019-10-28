@@ -164,7 +164,7 @@ class App(Notifier):
             self.cmdThread.join()
 
         CONFIG.save()
-        print("TERMINATED :)")
+        log.info("TERMINATED :)")
 
     def init(self):
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
@@ -247,7 +247,7 @@ class App(Notifier):
                 self.devInt.close()
                 self.notify('comm dropped')
             log.fatal(f"Failed to start {subject} loop: {e}")
-            log.debug(e, traceback=True)
+            log.debug('', traceback=True)
             return False
 
         self.stopEvent = Event()
@@ -326,7 +326,7 @@ class App(Notifier):
                 tlog.error(e)
             tlog.info("Packet discarded")
             if isinstance(e, VerboseError):
-                tlog.error(e, level='debug')
+                tlog.debug(e)
             self.notify('comm error')
         else:
             if self.appInt.nTimeouts:
@@ -370,7 +370,7 @@ class App(Notifier):
                 tlog.error(e)
             tlog.info("Packet discarded")
             if isinstance(e, VerboseError):
-                tlog.error(e, level='debug')
+                tlog.debug(e)
             self.notify('comm error')
         else:
             if self.devInt.nTimeouts:
@@ -432,12 +432,12 @@ class App(Notifier):
 
         except SerialError as e:
             tlog.fatal(f"Transaction failed: {e}")
-            tlog.debug(e, traceback=True)
+            tlog.debug('', traceback=True)
             self.notify('comm failed')
             # TODO: what needs to be done when unexpected error happens [1]?
         except Exception as e:
             tlog.fatal(f"Unexpected error happened: {e}")
-            tlog.error(e, traceback=True)
+            tlog.error('', traceback=True)
             self.notify('comm failed')
         finally:
             self.appInt.close()
@@ -478,11 +478,11 @@ class App(Notifier):
                     self.appInt.reset_input_buffer()
         except SerialError as e:
             tlog.fatal(f"Transaction failed: {e}")
-            tlog.debug(e, traceback=True)
+            tlog.debug('', traceback=True)
             self.notify('comm failed')
         except Exception as e:
             tlog.fatal(f"Unexpected error happened: {e}")
-            tlog.error(e, traceback=True)
+            tlog.error('', traceback=True)
             self.notify('comm failed')
         finally:
             self.appInt.close()
@@ -501,7 +501,7 @@ class App(Notifier):
                     self.devInt.open()
                 except SerialError as e:
                     log.error(f"Transaction failed - cannot open port '{port}' - {e}")
-                    log.debug(e, traceback=True)
+                    log.debug('', traceback=True)
                     return False
             try:
                 self.devInt.sendPacket(data)
@@ -514,9 +514,9 @@ class App(Notifier):
             except SerialReadTimeoutError:
                 log.warning("Device timeout")
                 self.notify('comm timeout')
-            except (DataInvalidError, SerialCommunicationError) as e:
+            except (DataInvalidError, SerialError) as e:
                 log.error(f"Transaction failed - {e}")
-                log.debug(e, traceback=True)
+                log.debug('', traceback=True)
             else:
                 self.notify('comm ok')
                 return True
@@ -631,12 +631,9 @@ class App(Notifier):
                 return
 
 
-        print()
-        cmd.info(f"————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
-        print()
-        cmd.info(showHelp())
-        print()
-        cmd.info(f"Available protocols: {', '.join(self.protocols)}")
+        cmd.info(f"\n————— Protocol proxy v{self.VERSION} CMD interface —————".center(80))
+        cmd.info(f"\n{showHelp()}")
+        cmd.info(f"\nAvailable protocols: {', '.join(self.protocols)}")
 
         while True:
             try:
@@ -716,7 +713,7 @@ class App(Notifier):
                     else: raise CommandError(f"Wrong parameters")
 
                 elif command == '>':
-                    try: print(exec(userinput[2:]))
+                    try: cmd.info(exec(userinput[2:]))
                     except Exception as e: cmd.error(f"Execution error: {e}")
 
                 elif not self.device and command != 'p':
