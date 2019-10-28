@@ -1,3 +1,4 @@
+import logging
 import sys
 from os.path import abspath, dirname
 from os.path import join as joinpath, expandvars as envar
@@ -20,8 +21,7 @@ if __name__ == '__main__':
     print(f"Launched from: {abspath(__file__)}")
     print(f"Launched with args: [{', '.join(sys.argv)}]")
 
-    ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy')
-    ProtocolLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\Tests\\ProtocolProxy', 'devices')
+    ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\ProtocolProxy')
 
     INFO = {
         'version': __version__,
@@ -34,4 +34,5 @@ if __name__ == '__main__':
 
     with app:
         exit_msg = ui.exec()
+    logging.shutdown()
     sys.exit(exit_msg)

@@ -36,7 +36,7 @@ from entry import Entry
 
 # TODO: logging on a separate UI panel
 
-# TODO: logging.shutdown() at very exit
+# ✓ logging.shutdown() at very exit
 
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 

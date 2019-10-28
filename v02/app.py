@@ -1,7 +1,7 @@
 import importlib
 from threading import Thread, Event
 from contextlib import contextmanager
-from os import listdir, linesep
+from os import listdir, linesep, makedirs
 from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
 from sys import exit as sys_exit, path as sys_path
 from typing import Union, Dict, Type, Callable
@@ -45,11 +45,9 @@ class ProtocolLoader(dict):
 
     def __init__(self, path: str = None):
         super().__init__()
-        if path is None:
-            self.__protocols_path__ = self.__class__.path
-        else:
-            if not isdir(path): raise ApplicationError(f"Invalid protocols directory path: {path}")
-            else: self.__protocols_path__ = path
+        self.__protocols_path__ = self.__class__.path if path is None else path
+        if not isdir(self.__protocols_path__):
+            makedirs(self.__protocols_path__)
         for filename in listdir(self.__protocols_path__):
             if (filename.endswith('.py') and isfile(joinpath(self.__protocols_path__, filename))):
                 self.setdefault(filename[:-3].lower())
