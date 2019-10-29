@@ -1,13 +1,15 @@
+import logging
 from functools import partial
 from typing import Tuple, Iterable
 
-from PyQt5.QtCore import pyqtSignal, QRegularExpression as QRegex
+from PyQt5.QtCore import Qt, pyqtSignal, QRegularExpression as QRegex, QTimer
 from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget, QPlainTextEdit
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
 from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor
 from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel
-from Utils import Logger, formatDict, virtualport, ignoreErrors
+from Utils import Logger, formatDict, virtualport, ignoreErrors, ConfigLoader
+from Utils.colored_logger import ColoredLogger
 from pkg_resources import resource_filename
 
 from app import App, ApplicationError
@@ -22,7 +24,7 @@ from entry import Entry
 
 # ✓ window icon
 
-# TODO: Put maximum amount of parameters in CONFIG
+# ✓ Put maximum amount of parameters in CONFIG
 
 # ✓ Fix window icon
 
@@ -34,9 +36,13 @@ from entry import Entry
 
 # ✓ Manual mode binding
 
-# TODO: logging on a separate UI panel
+# ✓ Logging on a separate UI panel
 
 # ✓ logging.shutdown() at very exit
+
+# ✓ Fix ui focus tab order
+
+# TODO: "Add protocol" button (just copy *.py file into <config>/devices directory
 
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
@@ -46,10 +52,17 @@ from entry import Entry
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
 
-log = Logger("UI")
-log.setLevel('DEBUG')
-
 ICON = resource_filename(__name__, 'res/icon_r.png')
+
+log = Logger("UI")
+
+
+class CONFIG(ConfigLoader, section='UI'):
+    DEBUG_MODE = False
+    WINDOW_POSITION = None
+    SIZE = (750, 500)
+    LOGGING_LEVEL = 'DEBUG'
+    QT_LOGGING_LEVEL = 'INFO'
 
 
 class ControlPanel(QStackedWidget):
@@ -93,6 +106,9 @@ class UI(QApplication):
     def __init__(self, app, argv):
         super().__init__(argv)
 
+        CONFIG.load()
+        log.setLevel(CONFIG.LOGGING_LEVEL)
+
         self.title = f"{app.PROJECT_NAME} v{app.VERSION} © 2019 GlebMorgan"
         self.app: App = app
 
@@ -104,9 +120,11 @@ class UI(QApplication):
         self.deviceCombobox = self.newDeviceCombobox(self.root)
         self.controlPanel = ControlPanel(self.root)
         self.ncsPortHint = self.newPortHintLabel(self.root)
+        self.logPanel = self.newLogPanel(self.root)
 
-        for i in range(1, 5):
-            setattr(self, f'testButton{i}', self.newTestButton(self.root, i))
+        if CONFIG.DEBUG_MODE:
+            for i in range(1, 5):
+                setattr(self, f'testButton{i}', self.newTestButton(self.root, i))
 
         self.parseArgv(argv)
         self.setup()
@@ -116,16 +134,28 @@ class UI(QApplication):
         self.setStyle('fusion')
         self.initLayout(self.root)
         self.window.setCentralWidget(self.root)
+        # ▼ Seems that mainWindow gets destroyed at the time this callback is executed...
+        # self.aboutToQuit.connect(self.cleanup)
         if self.app.device is None:
             self.commPanel.setDisabled(True)
         else:
             self.changeProtocol(self.app.device.name)
+        self.setupLoggers('Config', 'Serial', 'Packets', 'Colorer', 'CommPanel',
+                             'Notifier', 'Device', 'App', 'Transactions', 'Entry', 'UI')
         self.app.init()
         self.deviceCombobox.updateContents()
-        setFocusChain(self.root, self.deviceCombobox, self.commPanel,
-                      self.testButton1, self.testButton2, self.testButton3, self.testButton4)
+        setFocusChain(self.deviceCombobox, self.commPanel, self.logPanel, owner=self.root)
         self.deviceCombobox.setFocus()
+        self.window.resize(*CONFIG.SIZE)
+        if CONFIG.WINDOW_POSITION is not None:
+            self.window.move(*CONFIG.WINDOW_POSITION)
         self.window.show()
+
+    def cleanup(self):
+        CONFIG.WINDOW_POSITION = (self.window.x(), self.window.y())
+        CONFIG.SIZE = (self.window.width(), self.window.height())
+        # CONFIG.save()  -> save is performed in .app afterwards
+        logging.shutdown()
 
     def bindSignals(self):
         self.app.addHandler('comm started', self.commStarted.emit)
@@ -165,11 +195,16 @@ class UI(QApplication):
         self.commFailed.connect(partial(self.commPanel.indicator.blink, DisplayColor.Red))
 
     def parseArgv(self, argv):
-        if '-cmd' in argv: self.app.startCmdThread()
+        if '-cmd' in argv:
+            QTimer.singleShot(self.app.startCmdThread)
 
     def setUiWindow(self):
+        def closeEvent(this, qCloseEvent):
+            QApplication.instance().cleanup()
+            super(this.__class__, this).closeEvent(qCloseEvent)
+
         this = QMainWindow()
-        this.move(1200, 200)  # TEMP
+        this.closeEvent = closeEvent.__get__(this, this.__class__)
         this.setWindowTitle(self.title)
         this.setWindowIcon(QIcon(ICON))
         return this
@@ -187,11 +222,14 @@ class UI(QApplication):
                 controls.addWidget(self.ncsPortHint)
                 controls.addWidget(self.controlPanel)
                 controls.addStretch()
-            with Block(main, layout='h', spacing=spacing, attr='testLayout') as test:
-                test.addWidget(self.testButton1)
-                test.addWidget(self.testButton2)
-                test.addWidget(self.testButton3)
-                test.addWidget(self.testButton4)
+            if CONFIG.DEBUG_MODE:
+                with Block(main, layout='h', spacing=spacing, attr='testLayout') as test:
+                    test.addWidget(self.testButton1)
+                    test.addWidget(self.testButton2)
+                    test.addWidget(self.testButton3)
+                    test.addWidget(self.testButton4)
+            with Block(main, layout='h', spacing=spacing, stretch=1, attr='loggingLayout') as logging:
+                logging.addWidget(self.logPanel)
 
     def newDeviceCombobox(self, parent):
         def updateContents(this):
@@ -236,6 +274,13 @@ class UI(QApplication):
         this = QLabel("", parent)
         this.updateLabel = updateLabel.__get__(this, this.__class__)  # bind method
         this.setVisible(False)
+        return this
+
+    def newLogPanel(self, parent):
+        this = QPlainTextEdit(parent)
+        this.setReadOnly(True)
+        # ▼ Commented to allow focus to enable deviceCombobox to focus out on Tab
+        # this.setFocusPolicy(Qt.NoFocus)
         return this
 
     def newTestButton(self, parent, n:int):
@@ -287,6 +332,17 @@ class UI(QApplication):
             with ignoreErrors(KeyError):
                 self.app.events['altered'].remove(self.app.ackTransaction)
 
+    def setupLoggers(self, *handlers: str):
+        for name in handlers:
+            logger: ColoredLogger = logging.getLogger(name)
+            try:
+                logger.setQtHandler(self.logPanel.appendHtml)
+            except AttributeError:
+                raise ValueError(f"Logger {logger.name} is not ColoredLogger instance")
+            else:
+                logger.qtHandler.setLevel(CONFIG.QT_LOGGING_LEVEL)
+                logger.consoleHandler.setLevel(CONFIG.LOGGING_LEVEL)
+
     def testSlot1(self):
         print(formatDict(self.app.events))
     testSlot1.name = 'Show app events'
@@ -302,13 +358,3 @@ class UI(QApplication):
     def testSlot4(self):
         print(formatDict(log.__class__.manager.loggerDict))
     testSlot4.name = 'Show loggers'
-
-    def testSendPacketMock(self):
-        from random import randint
-        fail = randint(0,1) == 0
-        if fail:
-            print('Emulate packet sent failure')
-            return False
-        else:
-            print('Emulate packet sent success')
-            return True
