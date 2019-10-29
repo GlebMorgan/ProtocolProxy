@@ -17,7 +17,6 @@ if __name__ == '__main__':
 
     install_exhook()
 
-    print(f"Launched from: {abspath(__file__)}")
     print(f"Launched with args: [{', '.join(sys.argv)}]")
 
     ConfigLoader.path = joinpath(envar('%APPDATA%'), '.PelengTools\\ProtocolProxy')

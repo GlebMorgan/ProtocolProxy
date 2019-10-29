@@ -1,14 +1,18 @@
 import logging
 from functools import partial
+from os import listdir
+from shutil import copyfile
 from typing import Tuple, Iterable
+from os.path import join as joinpath, basename
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRegularExpression as QRegex, QTimer
-from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget, QPlainTextEdit
+from PyQt5.QtCore import Qt, pyqtSignal, QRegularExpression as QRegex, QTimer, QUrl
+from PyQt5.QtGui import QRegularExpressionValidator as QRegexValidator, QIcon, QDesktopServices
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QSizePolicy, QVBoxLayout, QStackedWidget, \
+    QPlainTextEdit, QFileDialog
 from PyQt5.QtWidgets import QPushButton, QComboBox, QLabel
-from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor
-from PyQt5Utils import SerialCommPanel, QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel
-from Utils import Logger, formatDict, virtualport, ignoreErrors, ConfigLoader
+from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayColor, SerialCommPanel
+from PyQt5Utils import QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel, QSqButton, QRightclickButton
+from Utils import Logger, formatDict, formatList, virtualport, ignoreErrors, ConfigLoader
 from Utils.colored_logger import ColoredLogger
 from pkg_resources import resource_filename
 
@@ -65,6 +69,10 @@ class CONFIG(ConfigLoader, section='UI'):
     QT_LOGGING_LEVEL = 'INFO'
 
 
+class QRightclickSqButton(QRightclickButton, QSqButton):
+    pass
+
+
 class ControlPanel(QStackedWidget):
     def __init__(self, *args):
         super().__init__(*args)
@@ -95,6 +103,7 @@ class ControlPanel(QStackedWidget):
 
 class UI(QApplication):
     protocolChanged = pyqtSignal(str)
+    protocolsListUpdated = pyqtSignal()
     commStarted = pyqtSignal()
     commDropped = pyqtSignal()
     commFailed = pyqtSignal()
@@ -118,6 +127,7 @@ class UI(QApplication):
 
         self.commPanel = SerialCommPanel(self.root, app.devInt)
         self.deviceCombobox = self.newDeviceCombobox(self.root)
+        self.addDeviceButton = self.newAddDeviceButton(self.root)
         self.controlPanel = ControlPanel(self.root)
         self.ncsPortHint = self.newPortHintLabel(self.root)
         self.logPanel = self.newLogPanel(self.root)
@@ -141,10 +151,10 @@ class UI(QApplication):
         else:
             self.changeProtocol(self.app.device.name)
         self.setupLoggers('Config', 'Serial', 'Packets', 'Colorer', 'CommPanel',
-                             'Notifier', 'Device', 'App', 'Transactions', 'Entry', 'UI')
+                          'Notifier', 'Device', 'App', 'Transactions', 'Entry', 'UI')
         self.app.init()
         self.deviceCombobox.updateContents()
-        setFocusChain(self.deviceCombobox, self.commPanel, self.logPanel, owner=self.root)
+        setFocusChain(self.deviceCombobox, self.addDeviceButton, self.controlPanel, self.commPanel, owner=self.root)
         self.deviceCombobox.setFocus()
         self.window.resize(*CONFIG.SIZE)
         if CONFIG.WINDOW_POSITION is not None:
@@ -177,6 +187,10 @@ class UI(QApplication):
         self.protocolChanged.connect(lambda: self.commPanel.setInterface(self.app.devInt))
         self.protocolChanged.connect(partial(self.ncsPortHint.setVisible, True))
         self.protocolChanged.connect(self.ncsPortHint.updateLabel)
+
+        # New protocol files added
+        self.protocolsListUpdated.connect(self.app.reloadProtocols)
+        self.protocolsListUpdated.connect(self.deviceCombobox.updateContents)
 
         # Smart mode NCS packet monitoring
         self.commPanel.commModeChanged.connect(self.triggerSmartMode)
@@ -215,6 +229,7 @@ class UI(QApplication):
             with Block(main, layout='h', spacing=0, attr='toolLayout') as tools:
                 tools.addWidget(QFixedLabel("Device", self.root))
                 tools.addWidget(self.deviceCombobox)
+                tools.addWidget(self.addDeviceButton)
                 tools.addStretch(3)
                 tools.addSpacing(spacing)
                 tools.addWidget(self.commPanel)
@@ -242,7 +257,9 @@ class UI(QApplication):
             this.setValidator(QRegexValidator(
                     QRegex('|'.join(this.contents), options=QRegex.CaseInsensitiveOption)))
             this.colorer.patchValidator()
+            # CONSIDER: adjust width of this when adding new protocols
             this.setCurrentIndex(this.findText(savedText))
+            this.colorer.blink(DisplayColor.Blue)
 
         this = QHoldFocusComboBox(parent=parent)
         this.setLineEdit(QAutoSelectLineEdit())
@@ -279,8 +296,16 @@ class UI(QApplication):
     def newLogPanel(self, parent):
         this = QPlainTextEdit(parent)
         this.setReadOnly(True)
-        # ▼ Commented to allow focus to enable deviceCombobox to focus out on Tab
-        # this.setFocusPolicy(Qt.NoFocus)
+        this.setFocusPolicy(Qt.NoFocus)
+        return this
+
+    def newAddDeviceButton(self, parent):
+        this = QRightclickSqButton('+', parent)
+        this.colorer = Colorer(this)
+        this.clicked.connect(self.addProtocolFiles)
+        this.rclicked.connect(self.showProtocolsFolder)
+        this.setToolTip('Add protocol<br>'
+                        'Open protocols folder (rightclick)')
         return this
 
     def newTestButton(self, parent, n:int):
@@ -290,6 +315,34 @@ class UI(QApplication):
         if hasattr(slot, 'name'):
             this.setText(slot.name)
         return this
+
+    def addProtocolFiles(self):
+        log.debug("Querying for new protocol file(s)...")
+        files = QFileDialog.getOpenFileNames(self.window, 'Add protocol file(s)',
+                self.app.PROJECT_FOLDER, 'Python files (*.py)')[0]
+        if files:
+            log.debug(f"Selected {len(files)} protocol files:\n{formatList(files, indent=4)}")
+            protocolsFolder = self.app.PROTOCOLS_FOLDER
+            existingFiles = listdir(protocolsFolder)
+            filesCopied = []
+
+            for file in files:
+                filename = basename(file)
+                if filename in existingFiles:
+                    log.warning(f"File {filename} already exists in devices directory")
+                else:
+                    copyfile(file, joinpath(protocolsFolder, filename))
+                    filesCopied.append(filename)
+            if filesCopied:
+                log.info(f"Copied {len(filesCopied)} files to devices folder: {', '.join(filesCopied)}")
+
+            self.protocolsListUpdated.emit()
+            self.sender().colorer.blink(DisplayColor.Green)
+        else:
+            log.debug("No files were selected")
+
+    def showProtocolsFolder(self):
+        QDesktopServices.openUrl(QUrl("file:///" + self.app.PROTOCOLS_FOLDER, QUrl.TolerantMode))
 
     def changeProtocol(self, protocol=None):
         if protocol is None:
