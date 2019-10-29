@@ -6,7 +6,7 @@ from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvar
 from sys import exit as sys_exit, path as sys_path
 from typing import Union, Dict, Type, Callable
 
-from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, capital
+from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, capital, Formatters
 
 from device import Device, DataInvalidError
 from notifier import Notifier
@@ -567,8 +567,8 @@ class App(Notifier):
         Logger.all['Packets'].setLevel(level)
 
     def runCmd(self):
-        # ▼ TODO: provide custom formatter choice here
-        cmd = Logger()
+        cmd = Logger('AppCMD')
+        cmd.consoleHandler.setFormatter(Formatters.simpleColored)
         cmd.setLevel('DEBUG')
 
         commandsHelp = {
