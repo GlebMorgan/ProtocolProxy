@@ -3,7 +3,7 @@ from threading import Thread, Event
 from contextlib import contextmanager
 from os import listdir, linesep, makedirs
 from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
-from sys import exit as sys_exit, path as sys_path
+import sys
 from typing import Union, Dict, Type, Callable
 
 from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, capital, Formatters
@@ -51,7 +51,7 @@ class ProtocolLoader(dict):
         for filename in listdir(self.__protocols_path__):
             if (filename.endswith('.py') and isfile(joinpath(self.__protocols_path__, filename))):
                 self.setdefault(filename[:-3].lower())
-        sys_path.append(self.__protocols_path__)
+        sys.path.append(self.__protocols_path__)
 
     def __getitem__(self, item:str) -> Type[Device]:
         pDir = basename(self.__protocols_path__)
@@ -117,6 +117,7 @@ class App(Notifier):
         self.VERSION = INFO['version']
         self.PROJECT_NAME = INFO['projectname']
         self.PROJECT_FOLDER = INFO['projectdir']
+        self.PROTOCOLS_FOLDER = ProtocolLoader.path
 
         self.protocols: ProtocolLoader = ProtocolLoader()
 
@@ -166,7 +167,7 @@ class App(Notifier):
 
     def init(self):
         log.info(f"Project directory:   {self.PROJECT_FOLDER}")
-        log.info(f"Protocols directory: {joinpath(self.protocols.__protocols_path__)}")
+        log.info(f"Protocols directory: {self.PROTOCOLS_FOLDER}")
         for name, level in self.loggerLevels.items(): Logger.all[name].setLevel(level)
         self.addEvents(
             'app initialized',   # All required startup initialization finished, API methods could be used
@@ -182,6 +183,9 @@ class App(Notifier):
         )
 
         self.notify('app initialized')
+
+    def reloadProtocols(self):
+        self.protocols = ProtocolLoader()
 
     def startCmdThread(self):
         self.cmdThread = Thread(name="CMD thread", target=self.runCmd)
@@ -650,8 +654,10 @@ class App(Notifier):
 
                 if (command == 'e'):
                     cmd.error("Terminating...")  # 'error' is just for visual standing out
+                    try: self.__exit__(None, None, None)
+                    except Exception: pass
                     self.notify('quit')
-                    sys_exit(0)
+                    sys.exit(0)
 
                 elif command in ('h', 'help'):
                     if len(params) == 1:
