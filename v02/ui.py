@@ -14,7 +14,7 @@ from PyQt5Utils import Block, blockedSignals, setFocusChain, Colorer, DisplayCol
 from PyQt5Utils import QHoldFocusComboBox, QAutoSelectLineEdit, QFixedLabel, QSqButton, QRightclickButton
 from Utils import Logger, formatDict, formatList, virtualport, ignoreErrors, ConfigLoader
 from Utils.colored_logger import ColoredLogger
-from pkg_resources import resource_filename
+from importlib.resources import path as resource_path
 
 from app import App, ApplicationError
 from device import Device
@@ -46,7 +46,7 @@ from entry import Entry
 
 # ✓ Fix ui focus tab order
 
-# TODO: "Add protocol" button (just copy *.py file into <config>/devices directory
+# ✓ "Add protocol" button (just copy *.py file into <config>/devices directory
 
 # CONSIDER: help functionality: tooltips, dedicated button (QT 'whatsThis' built-in), etc.
 
@@ -56,7 +56,7 @@ from entry import Entry
 #           some_protocol.ui is launched - pull up main ui and init with executed protocol ui
 
 
-ICON = resource_filename(__name__, 'res/icon_r.png')
+ICON_RES = resource_path('res', 'icon_r.png')
 
 log = Logger("UI")
 
@@ -210,7 +210,7 @@ class UI(QApplication):
 
     def parseArgv(self, argv):
         if '-cmd' in argv:
-            QTimer.singleShot(self.app.startCmdThread)
+            QTimer.singleShot(0, self.app.startCmdThread)
 
     def setUiWindow(self):
         def closeEvent(this, qCloseEvent):
@@ -220,7 +220,8 @@ class UI(QApplication):
         this = QMainWindow()
         this.closeEvent = closeEvent.__get__(this, this.__class__)
         this.setWindowTitle(self.title)
-        this.setWindowIcon(QIcon(ICON))
+        with ICON_RES as path:
+            this.setWindowIcon(QIcon(str(path.resolve())))
         return this
 
     def initLayout(self, parent):
