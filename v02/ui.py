@@ -265,7 +265,6 @@ class UI(QApplication):
         this.setLineEdit(QAutoSelectLineEdit())
         this.setEditable(True)
         this.colorer = Colorer(widget=this, base=this.lineEdit())
-        this.contents = ()
 
         this.setInsertPolicy(QComboBox.NoInsert)
         this.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
