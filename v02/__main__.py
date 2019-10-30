@@ -1,4 +1,12 @@
 import sys
+
+if sys.executable.endswith("pythonw.exe"):
+    from os import devnull
+    sys.stdout = open(devnull, "w", encoding='utf-8')
+    sys.stderr = open(devnull, "w", encoding='utf-8')
+else:
+    sys.argv.append('-cmd')
+
 from os.path import abspath, dirname
 from os.path import join as joinpath, expandvars as envar
 
@@ -8,9 +16,8 @@ from Utils import ConfigLoader
 from app import App, ProtocolLoader
 from ui import UI
 
-# TODO: packaging
 
-__version__ = '2.0.dev1'
+__version__ = '2.1.0'
 
 
 if __name__ == '__main__':

@@ -85,11 +85,6 @@ class EntryBase(QWidget):
             except AttributeError: pass
         layout.addStretch()
 
-        # self.label.setStyleSheet('background-color: rgb(200, 200, 255)')  # TEMP
-        # if hasattr(self, 'input'):
-        #     self.input.setStyleSheet('background-color: rgb(200, 255, 200)')  # TEMP
-        # self.echo.setStyleSheet('background-color: rgb(255, 200, 200)')  # TEMP
-
         self.setLayout(layout)
 
     def bindSignals(self):

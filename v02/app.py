@@ -621,13 +621,13 @@ class App(Notifier):
                 self.device.IDLE_PAYLOAD = bytes.fromhex('00 01 01 00 00 00 00 00 00 00 00 00')
                 cmd.debug(f"{self.device.name} default payload changed to [{bytewise(self.device.IDLE_PAYLOAD)}]")
             elif args[0] == 'config':
-                print(f"BIG_TIMEOUT_DELAY = {CONFIG.BIG_TIMEOUT_DELAY}")
+                cmd.debug(f"BIG_TIMEOUT_DELAY = {CONFIG.BIG_TIMEOUT_DELAY}")
             elif args[0] == 'alterconfig':
                 CONFIG.BIG_TIMEOUT_DELAY = 100500  # :D
-                print(f"CONFIG.BIG_TIMEOUT_DELAY changed to {CONFIG.BIG_TIMEOUT_DELAY}")
+                cmd.debug(f"CONFIG.BIG_TIMEOUT_DELAY changed to {CONFIG.BIG_TIMEOUT_DELAY}")
             elif args[0] == 'revertconfig':
                 CONFIG.revert()
-                print("CONFIG.revert() called")
+                cmd.debug("CONFIG.revert() called")
             else:
                 cmd.error(f"No such option defined: {args[0]}")
                 return
