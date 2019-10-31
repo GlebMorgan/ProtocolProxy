@@ -1,18 +1,18 @@
 import importlib
-from threading import Thread, Event
+import sys
 from contextlib import contextmanager
 from os import listdir, linesep, makedirs
 from os.path import abspath, dirname, isfile, join as joinpath, isdir, expandvars as envar, basename
-import sys
+from threading import Thread, Event
 from typing import Union, Dict, Type, Callable
 
-from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, capital, Formatters
+from Transceiver import SerialTransceiver, PelengTransceiver
+from Transceiver.errors import *
+from Transceiver.errors import VerboseError
+from Utils import Logger, bytewise, castStr, ConfigLoader, formatDict, Formatters
 
 from device import Device, DataInvalidError
 from notifier import Notifier
-from Transceiver import SerialTransceiver, PelengTransceiver
-from Transceiver.errors import VerboseError
-from Transceiver.errors import *
 
 # NCS - Native Control Software - external native application that is used
 #       to control the device through ProtocolProxy app

@@ -209,7 +209,7 @@ class UI(QApplication):
         self.commFailed.connect(partial(self.commPanel.indicator.blink, DisplayColor.Red))
 
     def parseArgv(self, argv):
-        if '-cmd' in argv:
+        if '-cmd' in argv or CONFIG.DEBUG_MODE:
             QTimer.singleShot(0, self.app.startCmdThread)
 
     def setUiWindow(self):
@@ -280,13 +280,21 @@ class UI(QApplication):
     def newPortHintLabel(self, parent):
         def updateLabel(this):
             assert self.app.appInt is not None
-            nativeComPort = virtualport.find_complement(self.app.appInt.port)
-            if nativeComPort is None:
-                text = f'<font color="red">App interface com port <b>{self.app.appInt.port}</b> ' \
-                       'is not part of virtual com port pair</font>'
+            try:
+                nativeComPort = virtualport.find_complement(self.app.appInt.port)
+            except OSError as e:
+                log.error(e)
+                if hasattr(e, 'stdout') and e.stdout:
+                    log.error(f'Stdout: {e.stdout}')
+                if hasattr(e, 'stderr') and e.stderr:
+                    log.error(f'Stderr: {e.stderr}')
             else:
-                text = f"Connect native control soft to <b>{nativeComPort}</b>"
-            this.setText(text)
+                if nativeComPort is None:
+                    text = f'<font color="red">App interface com port <b>{self.app.appInt.port}</b> ' \
+                           'is not part of virtual com port pair</font>'
+                else:
+                    text = f"Connect native control soft to <b>{nativeComPort}</b>"
+                this.setText(text)
 
         this = QLabel("", parent)
         this.updateLabel = updateLabel.__get__(this, this.__class__)  # bind method

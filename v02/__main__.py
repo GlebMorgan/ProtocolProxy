@@ -2,10 +2,7 @@ import sys
 
 if sys.executable.endswith("pythonw.exe"):
     from os import devnull
-    sys.stdout = open(devnull, "w", encoding='utf-8')
-    sys.stderr = open(devnull, "w", encoding='utf-8')
-else:
-    sys.argv.append('-cmd')
+    sys.stdout = sys.stderr = open(devnull, "w", encoding='utf-8')
 
 from os.path import abspath, dirname
 from os.path import join as joinpath, expandvars as envar
@@ -13,7 +10,7 @@ from os.path import join as joinpath, expandvars as envar
 from PyQt5Utils import install_exhook
 from Utils import ConfigLoader
 
-from app import App, ProtocolLoader
+from app import App
 from ui import UI
 
 
